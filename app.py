@@ -95,25 +95,31 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
 
     dados['fornecedor'] = fornecedor_nome.upper() if fornecedor_nome else "FORNECEDOR NÃO IDENTIFICADO"
 
-    # 5. DEMAIS DADOS (CAMPANHA, MÊS)
+    # 5. LISTA DE PALAVRAS DE PARADA (Evita misturar as colunas do PDF)
+    stop_words_gerais = r"(ACABAMENTO|VALIDADE|PRODUTO|ESP[EÉ]CIE|T[ÍI]TULO|MEIO|FORMATO|PER[ÍI]ODO|CAMPANHA|VALOR|DATA|VE[IÍ]CULO|CNPJ|CLIENTE|PROJETO|CORES|PZ\.ENTREGA|A CLIENTE|DESCRI[ÇC][ÃA]O)"
+    
     def extrair_e_limpar(padrao):
         match = re.search(padrao, texto, re.IGNORECASE)
         if match:
             res = match.group(1).strip()
-            res = re.split(r"(MEIO|FORMATO|PER[ÍI]ODO|CAMPANHA|VALOR|DATA|VE[IÍ]CULO|CNPJ|CLIENTE)", res, flags=re.IGNORECASE)[0].strip()
+            res = re.split(stop_words_gerais, res, flags=re.IGNORECASE)[0].strip()
+            res = re.split(r"\||\+|=|_", res)[0].strip()
             return res
         return ""
 
+    # DADOS ESPECÍFICOS: CAMPANHA, TÍTULO E MÊS
     campanha = extrair_e_limpar(r"CAMPANHA:\s*([^\n\r]+)")
     dados['campanha'] = campanha if campanha else "MÍDIAS INSTITUCIONAIS"
+    
+    titulo = extrair_e_limpar(r"T[ÍI]TULO:\s*([^\n\r]+)")
+    dados['titulo'] = titulo if titulo else "N/A"
     
     mes = extrair_e_limpar(r"(?:M[ÊE]S|PER[ÍI]ODO|DATA)\s*[:\-]?\s*([^\n\r]+)")
     mes = re.sub(r"^(M[ÊE]S DE\s*|M[ÊE]S\s*)", "", mes, flags=re.IGNORECASE) if mes else "Agosto/2026"
     dados['mes_ano'] = mes
 
-    # 6. NOVA LÓGICA DE EXTRAÇÃO PARA A "PEÇA" (Busca detalhada)
-    peca_header = extrair_e_limpar(r"(?:PE[ÇC]A|SERVI[ÇC]O|T[ÍI]TULO)\s*[:\-]?\s*([^\n\r]+)")
-    
+    # 6. DADOS ESPECÍFICOS PARA MÍDIA (PEÇA)
+    peca_header = extrair_e_limpar(r"(?:PE[ÇC]A|SERVI[ÇC]O)\s*[:\-]?\s*([^\n\r]+)")
     match_aut = re.search(r"REFERENTE\s*[AÀ]\s*([^\n\r]+)", texto, re.IGNORECASE)
     if match_aut:
         texto_peca = match_aut.group(1).strip()
@@ -124,7 +130,6 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
         else:
             texto_peca = peca_header
             
-    # Tenta pegar informações de VOLUME/FACES se existir logo abaixo
     match_vol = re.search(r"VOLUME:\s*([^\n\r]+)", texto, re.IGNORECASE)
     if match_vol and texto_peca != peca_header:
         texto_peca += f" - {match_vol.group(1).strip()}"
@@ -133,6 +138,16 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
         texto_peca = "Serviço de Publicidade"
         
     dados['peca'] = texto_peca
+
+    # 7. DADOS ESPECÍFICOS PARA PRODUÇÃO (SERVIÇOS)
+    # Procura pela palavra DESCRIÇÃO/FORNECEDOR e pega o item número 1 da tabela
+    match_servico = re.search(r"DESCRI[ÇC][ÃA]O/FORNECEDOR[\s\S]{1,150}?(?:^|\s)(?:1|01)\s+([^\n\r]+)", texto, re.IGNORECASE)
+    if match_servico:
+        linha_serv = match_servico.group(1).strip()
+        # Corta o texto quando encontra grandes espaços vazios ou os prazos (ex: 15DFM)
+        dados['servicos'] = re.split(r"\s{2,}|\d{1,2}DFM|CNPJ", linha_serv, flags=re.IGNORECASE)[0].strip()
+    else:
+        dados['servicos'] = "Serviços de Produção"
     
     return dados
 
@@ -140,7 +155,7 @@ if st.button("🚀 Gerar Atestado Oficial", type="primary"):
     if not uploaded_file or not pi_pp_input:
         st.error("Por favor, envie o arquivo PDF e digite o número do PI/PP.")
     else:
-        with st.spinner("Analisando PDF e extraindo informações da Peça/Volume..."):
+        with st.spinner("Analisando PDF e extraindo informações de Serviço/Título..."):
             pdf_bytes = uploaded_file.read()
             dados = extrair_dados_pdf_escaneado(pdf_bytes)
         
@@ -205,11 +220,10 @@ if st.button("🚀 Gerar Atestado Oficial", type="primary"):
             
             pdf.set_fill_color(255, 255, 255)
             pdf.set_text_color(0, 0, 0)
-            pdf.set_font("Helvetica", "", 7.5) # Fonte sutilmente menor para caber mais
+            pdf.set_font("Helvetica", "", 7.5) 
             pdf.cell(10, 10, "1", border=1, align="C")
             pdf.cell(35, 10, limitar_tamanho(dados['ap_oc'], 20), border=1, align="C")
             pdf.cell(30, 10, limitar_tamanho(pi_pp_input, 15), border=1, align="C")
-            # Aumentado o limite de caracteres da peça para 60 para acomodar a frase da autorização
             pdf.cell(60, 10, limitar_tamanho(dados['peca'], 60), border=1, align="C")
             pdf.cell(45, 10, limitar_tamanho(dados['campanha'], 35), border=1, align="C")
             
@@ -228,8 +242,9 @@ if st.button("🚀 Gerar Atestado Oficial", type="primary"):
             pdf.cell(10, 10, "1", border=1, align="C")
             pdf.cell(25, 10, limitar_tamanho(pi_pp_input, 15), border=1, align="C")
             pdf.cell(25, 10, limitar_tamanho(dados['ap_oc'], 15), border=1, align="C")
-            pdf.cell(45, 10, limitar_tamanho(dados['peca'], 40), border=1, align="C")
-            pdf.cell(35, 10, limitar_tamanho(dados['peca'], 30), border=1, align="C")
+            # Agora usa a extração específica dos Serviços e do Título
+            pdf.cell(45, 10, limitar_tamanho(dados['servicos'], 40), border=1, align="C")
+            pdf.cell(35, 10, limitar_tamanho(dados['titulo'], 30), border=1, align="C")
             pdf.cell(40, 10, limitar_tamanho(dados['campanha'], 30), border=1, align="C")
             
         pdf.ln(10)
