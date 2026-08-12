@@ -60,11 +60,14 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
     dados['is_midia'] = bool(match_ap)
     dados['ap_oc'] = match_ap.group(1) if match_ap else (match_oc.group(1) if match_oc else "N/A")
     
-    # 3. EXTRAI O CNPJ DO FORNECEDOR/VEÍCULO (Ignorando o do SESC/SENAC)
+    # 3. EXTRAI O CNPJ DO FORNECEDOR/VEÍCULO 
+    # (Ignorando os CNPJs do SESC, SENAC e da própria EBM QUINTTO)
+    cnpjs_ignorados = ["03.612.122/0001-27", "03.648.344/0001-08", "14.470.051/0001-91"]
     cnpjs_encontrados = re.findall(r"\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}", texto)
+    
     fornecedor_cnpj = ""
     for c in cnpjs_encontrados:
-        if c not in ["03.612.122/0001-27", "03.648.344/0001-08"]:
+        if c not in cnpjs_ignorados:
             fornecedor_cnpj = c
             break
     dados['fornecedor_cnpj'] = fornecedor_cnpj
@@ -72,13 +75,20 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
     # 4. EXTRAI A RAZÃO SOCIAL DO FORNECEDOR (Lendo a linha acima do CNPJ)
     fornecedor_nome = ""
     linhas = [l.strip() for l in texto.split('\n') if l.strip()]
+    
     if fornecedor_cnpj:
         for i, linha in enumerate(linhas):
             if fornecedor_cnpj in linha and i > 0:
                 fornecedor_nome = linhas[i-1]
+                
+                # Trava de segurança: Se a linha de cima for Telefone/Fax, sobe mais uma linha
+                if "FONE" in fornecedor_nome.upper() or "FAX" in fornecedor_nome.upper():
+                    fornecedor_nome = linhas[i-2] if i > 1 else fornecedor_nome
+                    
                 fornecedor_nome = re.sub(r"^(FORNECEDOR|VE[IÍ]CULO|RAZ[ÃA]O SOCIAL|EMPRESA)\s*[:\-]?\s*", "", fornecedor_nome, flags=re.IGNORECASE)
                 break
                 
+    # Fallback se não encontrar o CNPJ corretamente
     if len(fornecedor_nome) < 3:
         match_fornecedor = re.search(r"(?:FORNECEDOR|VE[IÍ]CULO|RAZ[ÃA]O SOCIAL|EMPRESA)\s*[:\-]?\s*([^\n\r]+)", texto, re.IGNORECASE)
         if match_fornecedor:
