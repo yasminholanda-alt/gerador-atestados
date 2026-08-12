@@ -90,13 +90,13 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
         match_fornecedor = re.search(r"(?:FORNECEDOR|VE[IÍ]CULO|RAZ[ÃA]O SOCIAL|EMPRESA)\s*[:\-]?\s*([^\n\r]+)", texto, re.IGNORECASE)
         if match_fornecedor:
             fornecedor_nome = match_fornecedor.group(1).strip()
-            fornecedor_nome = re.split(r"(MEIO|FORMATO|PER[ÍI]ODO|CAMPANHA|VALOR|DATA|VE[IÍ]CULO|CNPJ|CLIENTE)", fornecedor_nome, flags=re.IGNORECASE)[0].strip()
+            fornecedor_nome = re.split(r"(MEIO|FORMATO|PER[ÍI]ODO|CAMPANHA:|VALOR:|DATA:|VE[IÍ]CULO:|CNPJ:|CLIENTE:)", fornecedor_nome, flags=re.IGNORECASE)[0].strip()
             fornecedor_nome = re.split(r"\||\+|=|_", fornecedor_nome)[0].strip()
 
     dados['fornecedor'] = fornecedor_nome.upper() if fornecedor_nome else "FORNECEDOR NÃO IDENTIFICADO"
 
-    # 5. LISTA DE PALAVRAS DE PARADA (Evita misturar as colunas do PDF)
-    stop_words_gerais = r"(ACABAMENTO|VALIDADE|PRODUTO|ESP[EÉ]CIE|T[ÍI]TULO|MEIO|FORMATO|PER[ÍI]ODO|CAMPANHA|VALOR|DATA|VE[IÍ]CULO|CNPJ|CLIENTE|PROJETO|CORES|PZ\.ENTREGA|A CLIENTE|DESCRI[ÇC][ÃA]O)"
+    # 5. LISTA DE PALAVRAS DE PARADA REFINADA (Exige os dois pontos ":" para evitar falsos positivos)
+    stop_words_gerais = r"(ACABAMENTO:|VALIDADE:|PRODUTO:|ESP[EÉ]CIE:|T[ÍI]TULO:|MEIO:|FORMATO:|PER[ÍI]ODO:|CAMPANHA:|VALOR:|DATA:|VE[IÍ]CULO:|CNPJ:|CLIENTE:|PROJETO:|CORES:|PZ\.ENTREGA:|A CLIENTE:|DESCRI[ÇC][ÃA]O/FORNECEDOR)"
     
     def extrair_e_limpar(padrao):
         match = re.search(padrao, texto, re.IGNORECASE)
@@ -140,12 +140,12 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
     dados['peca'] = texto_peca
 
     # 7. DADOS ESPECÍFICOS PARA PRODUÇÃO (SERVIÇOS)
-    # Procura pela palavra DESCRIÇÃO/FORNECEDOR e pega o item número 1 da tabela
-    match_servico = re.search(r"DESCRI[ÇC][ÃA]O/FORNECEDOR[\s\S]{1,150}?(?:^|\s)(?:1|01)\s+([^\n\r]+)", texto, re.IGNORECASE)
+    # Procura a área de descrição da tabela e puxa a linha que começa com o número 1
+    match_servico = re.search(r"(?:OP[ÇC][ÃA]O|DESCRI[ÇC][ÃA]O.*?FORNECEDOR)[\s\S]{1,200}?(?:^|\n)\s*(?:1|01)\s+([^\n\r]+)", texto, re.IGNORECASE)
     if match_servico:
         linha_serv = match_servico.group(1).strip()
-        # Corta o texto quando encontra grandes espaços vazios ou os prazos (ex: 15DFM)
-        dados['servicos'] = re.split(r"\s{2,}|\d{1,2}DFM|CNPJ", linha_serv, flags=re.IGNORECASE)[0].strip()
+        # Corta no primeiro grande espaço vazado do OCR ou ao bater num "15DFM", "CNPJ" ou "R$"
+        dados['servicos'] = re.split(r"\s{2,}|\d{1,2}DFM|CNPJ|R\$|VALOR", linha_serv, flags=re.IGNORECASE)[0].strip()
     else:
         dados['servicos'] = "Serviços de Produção"
     
@@ -242,7 +242,6 @@ if st.button("🚀 Gerar Atestado Oficial", type="primary"):
             pdf.cell(10, 10, "1", border=1, align="C")
             pdf.cell(25, 10, limitar_tamanho(pi_pp_input, 15), border=1, align="C")
             pdf.cell(25, 10, limitar_tamanho(dados['ap_oc'], 15), border=1, align="C")
-            # Agora usa a extração específica dos Serviços e do Título
             pdf.cell(45, 10, limitar_tamanho(dados['servicos'], 40), border=1, align="C")
             pdf.cell(35, 10, limitar_tamanho(dados['titulo'], 30), border=1, align="C")
             pdf.cell(40, 10, limitar_tamanho(dados['campanha'], 30), border=1, align="C")
