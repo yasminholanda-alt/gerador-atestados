@@ -36,13 +36,11 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
     dados = {}
     
     # 1. IDENTIFICAÇÃO INTELIGENTE DO CLIENTE (SESC x SENAC)
-    # Procura primeiro pelo CNPJ ou Razão Social exata
     if "03.648.344" in texto_upper or "SERVIÇO NACIONAL DE APRENDIZAGEM COMERCIAL" in texto_upper or "SERVICO NACIONAL" in texto_upper:
         is_senac = True
     elif "03.612.122" in texto_upper or "SERVIÇO SOCIAL DO COMERCIO" in texto_upper or "SERVICO SOCIAL" in texto_upper:
         is_senac = False
     else:
-        # Desempate caso o OCR esteja muito ruim: conta qual palavra aparece mais (ignorando cabeçalhos genéricos)
         contagem_senac = texto_upper.count("SENAC")
         contagem_sesc = texto_upper.count("SESC")
         is_senac = contagem_senac > contagem_sesc
@@ -62,7 +60,6 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
     dados['is_midia'] = bool(match_ap)
     dados['ap_oc'] = match_ap.group(1) if match_ap else (match_oc.group(1) if match_oc else "N/A")
     
-    # Função auxiliar para extrair texto e cortar sujeira de outras colunas
     def extrair_e_limpar(padrao):
         match = re.search(padrao, texto, re.IGNORECASE)
         if match:
@@ -97,17 +94,30 @@ if st.button("🚀 Gerar Atestado Oficial", type="primary"):
         data_hoje = f"{datetime.now().day} de {meses[datetime.now().month - 1]} de {datetime.now().year}"
         
         pdf = FPDF()
+        # Reduz a margem inferior para evitar criação de nova página desnecessariamente
+        pdf.set_auto_page_break(auto=True, margin=10)
         pdf.add_page()
         pdf.set_margins(15, 15, 15)
         
-        # Cabeçalho
+        # Cabeçalho: Título + Nova Logo
         pdf.set_font("Helvetica", "B", 12)
         titulo_doc = f"ATESTADO DE VEICULAÇÃO DE MÍDIA | {dados['tag_cliente']}" if dados['is_midia'] else f"ATESTADO DE PRODUÇÃO - {dados['tag_cliente']}"
         pdf.cell(130, 10, limpar_texto(titulo_doc), ln=0)
         
-        pdf.set_font("Helvetica", "B", 16)
-        pdf.cell(50, 5, "EBM", ln=1, align="R")
-        pdf.cell(180, 5, "QUINTTO.", ln=1, align="R")
+        # Insere a nova logo transparente
+        logo_path = "logo ebmquintto preta BG transparente.png"
+        if os.path.exists(logo_path):
+            pdf.image(logo_path, x=150, y=12, w=45)
+        else:
+            pdf.set_font("Helvetica", "B", 16)
+            pdf.cell(50, 10, "EBM QUINTTO.", ln=0, align="R")
+            
+        pdf.ln(12)
+        
+        # Linha amarela do cabeçalho
+        pdf.set_draw_color(255, 204, 0)
+        pdf.set_line_width(1.5)
+        pdf.line(15, pdf.get_y(), 195, pdf.get_y())
         pdf.ln(8)
         
         # Texto Principal
@@ -121,6 +131,9 @@ if st.button("🚀 Gerar Atestado Oficial", type="primary"):
         pdf.ln(8)
         
         # Tabela
+        pdf.set_draw_color(255, 204, 0) # Bordas Amarelas
+        pdf.set_line_width(1.0)
+        
         pdf.set_fill_color(0, 0, 0)
         pdf.set_text_color(255, 255, 255)
         pdf.set_font("Helvetica", "B", 8)
@@ -161,17 +174,18 @@ if st.button("🚀 Gerar Atestado Oficial", type="primary"):
             pdf.cell(35, 10, limitar_tamanho(dados['peca'], 20), border=1, align="C")
             pdf.cell(40, 10, limitar_tamanho(dados['campanha'], 22), border=1, align="C")
             
-        pdf.ln(15)
+        pdf.ln(10) # Reduzido o espaço para garantir 1 página
         
         # Data e Assinatura
         pdf.set_font("Helvetica", "", 10)
         pdf.cell(0, 6, limpar_texto(f"Fortaleza/CE, {data_hoje}."), ln=1)
-        pdf.ln(8)
+        pdf.ln(5) # Reduzido
         
         if os.path.exists("luma_signature_perfect.png"):
+            # Exibe apenas a imagem da assinatura
             pdf.image("luma_signature_perfect.png", x=15, w=60)
         
-        # Rodapé Exato
+        # Rodapé Exato fixado no final da folha
         pdf.set_y(-30)
         pdf.set_font("Helvetica", "", 7)
         pdf.set_text_color(100, 100, 100)
@@ -194,7 +208,7 @@ if st.button("🚀 Gerar Atestado Oficial", type="primary"):
         
         pdf_bytes = pdf.output()
         
-        st.success("✅ Atestado gerado com sucesso!")
+        st.success("✅ Atestado gerado com sucesso em página única!")
         st.download_button(
             label="📥 Baixar Atestado PDF",
             data=bytes(pdf_bytes),
