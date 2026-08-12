@@ -1,3 +1,4 @@
 streamlit
-pypdf
+pdf2image
+pytesseract
 fpdf2
