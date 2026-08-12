@@ -6,7 +6,6 @@ from fpdf import FPDF
 import pytesseract
 from pdf2image import convert_from_bytes
 
-# Configuração da Página
 st.set_page_config(page_title="Gerador de Atestados - EBM QUINTTO", page_icon="📄", layout="centered")
 
 st.title("📄 Gerador Automático de Atestados")
@@ -29,13 +28,14 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
     imagens = convert_from_bytes(pdf_bytes)
     texto = ""
     for img in imagens:
-        texto += pytesseract.image_to_string(img, lang='por') + "\n"
+        # O comando --psm 6 ajuda o Tesseract a alinhar melhor as colunas
+        texto += pytesseract.image_to_string(img, lang='por', config='--psm 6') + "\n"
         
     texto_upper = texto.upper()
     dados = {}
     
     # 1. CLIENTE
-    if "03.648.344" in texto_upper or "SERVIÇO NACIONAL DE APRENDIZAGEM COMERCIAL" in texto_upper or "SERVICO NACIONAL" in texto_upper:
+    if "03.648.344" in texto_upper or "SERVIÇO NACIONAL" in texto_upper or "SERVICO NACIONAL" in texto_upper:
         dados['cliente_nome'] = "SERVIÇO NACIONAL DE APRENDIZAGEM COMERCIAL SENAC AR/CE"
         dados['cliente_cnpj'] = "03.648.344/0001-08"
         dados['tag_cliente'] = "SENAC"
@@ -51,87 +51,68 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
     dados['ap_oc'] = match_ap.group(1) if match_ap else (match_oc.group(1) if match_oc else "N/A")
     
     # 3. CNPJ FORNECEDOR
-    cnpjs_ignorados = ["03.612.122/0001-27", "03.648.344/0001-08", "14.470.051/0001-91"]
     cnpjs_encontrados = re.findall(r"\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}", texto)
+    cnpjs_ignorados = ["03.612.122/0001-27", "03.648.344/0001-08", "14.470.051/0001-91"]
     fornecedor_cnpj = next((c for c in cnpjs_encontrados if c not in cnpjs_ignorados), "")
     dados['fornecedor_cnpj'] = fornecedor_cnpj
     
-    # 4. RAZÃO SOCIAL FORNECEDOR
+    # 4. FORNECEDOR
     fornecedor_nome = ""
-    linhas = [l.strip() for l in texto.split('\n') if l.strip()]
     if fornecedor_cnpj:
+        linhas = [l.strip() for l in texto_upper.split('\n') if l.strip()]
         for i, linha in enumerate(linhas):
             if fornecedor_cnpj in linha and i > 0:
                 fornecedor_nome = linhas[i-1]
-                if "FONE" in fornecedor_nome.upper() or "FAX" in fornecedor_nome.upper():
+                if "FONE" in fornecedor_nome or "FAX" in fornecedor_nome:
                     fornecedor_nome = linhas[i-2] if i > 1 else fornecedor_nome
-                fornecedor_nome = re.sub(r"^(FORNECEDOR|VE[IÍ]CULO|RAZ[ÃA]O SOCIAL|EMPRESA)\s*[:\-]?\s*", "", fornecedor_nome, flags=re.IGNORECASE)
-                # Corta se achar condição de pagamento que as vezes fica na mesma linha na OC
-                fornecedor_nome = re.split(r"\s{2,}|\d{1,3}\s*DFM|\d{1,3}\s*DIAS|\||\+|=|_", fornecedor_nome)[0].strip()
+                fornecedor_nome = re.sub(r"^(FORNECEDOR|VE[IÍ]CULO|RAZ[ÃA]O SOCIAL|EMPRESA)\s*[:\-]?\s*", "", fornecedor_nome)
+                fornecedor_nome = re.split(r"\||\+|=|_|\d{1,3}DFM|\d{1,3}\s*DIAS", fornecedor_nome)[0].strip()
                 break
 
     if len(fornecedor_nome) < 3:
-        match_fornecedor = re.search(r"(?:FORNECEDOR|VE[IÍ]CULO|RAZ[ÃA]O SOCIAL|EMPRESA)\s*[:\-]?\s*([^\n\r]+)", texto, re.IGNORECASE)
+        match_fornecedor = re.search(r"(?:FORNECEDOR|VE[IÍ]CULO|RAZ[ÃA]O SOCIAL|EMPRESA)\s*[:\-]?\s*([^\n\r]+)", texto_upper)
         if match_fornecedor:
-            fornecedor_nome = match_fornecedor.group(1).strip()
-            fornecedor_nome = re.split(r"(MEIO|FORMATO|PER[ÍI]ODO|CAMPANHA|VALOR|DATA|VE[IÍ]CULO|CNPJ|CLIENTE)", fornecedor_nome, flags=re.IGNORECASE)[0].strip()
+            fornecedor_nome = re.split(r"(MEIO|FORMATO|PER[ÍI]ODO|CAMPANHA|VALOR|DATA|VE[IÍ]CULO|CNPJ|CLIENTE)", match_fornecedor.group(1))[0].strip()
             fornecedor_nome = re.split(r"\||\+|=|_", fornecedor_nome)[0].strip()
 
-    dados['fornecedor'] = fornecedor_nome.upper() if fornecedor_nome else "FORNECEDOR NÃO IDENTIFICADO"
+    dados['fornecedor'] = fornecedor_nome if fornecedor_nome else "FORNECEDOR NÃO IDENTIFICADO"
 
-    # 5. CAMPANHA E TÍTULO (Com travas cirúrgicas de bloqueio)
-    # Pega tudo na frente de CAMPANHA até bater em 2 espaços vazios, quebra de linha ou nas palavras da coluna do lado.
-    match_camp = re.search(r"CAMPANHA\s*[:\.]?\s*(.*?)(?=\s{2,}|\n|PROJETO|PRODUTO|ESP[EÉ]CIE|T[IÍ]TULO|MEIO|FORMATO)", texto_upper)
-    if match_camp and len(match_camp.group(1).strip()) > 2:
-        dados['campanha'] = match_camp.group(1).strip()
-    else:
-        dados['campanha'] = "MÍDIAS INSTITUCIONAIS"
+    # 5. CAMPANHA E TÍTULO (Busca simplificada extrema)
+    match_camp = re.search(r"CAMPANHA\s*[:\.]?\s*(.*?)(?:PROJETO|PRODUTO|ESP[EÉ]CIE|T[IÍ]TULO|MEIO|FORMATO|CNPJ|\n|$)", texto_upper)
+    dados['campanha'] = match_camp.group(1).strip() if match_camp and len(match_camp.group(1).strip()) > 2 else "MÍDIAS INSTITUCIONAIS"
 
-    # Pega tudo na frente de TÍTULO até bater em 2 espaços vazios, quebra de linha ou nas palavras da coluna do lado.
-    match_tit = re.search(r"T[IÍ]TULO\s*[:\.]?\s*(.*?)(?=\s{2,}|\n|ACABAMENTO|VALIDADE|CORES|PZ\.ENTREGA)", texto_upper)
-    if match_tit and len(match_tit.group(1).strip()) > 2:
-        dados['titulo'] = match_tit.group(1).strip()
-    else:
-        dados['titulo'] = "N/A"
+    match_tit = re.search(r"T[IÍ]TULO\s*[:\.]?\s*(.*?)(?:ACABAMENTO|VALIDADE|CORES|PZ\.ENTREGA|\n|$)", texto_upper)
+    dados['titulo'] = match_tit.group(1).strip() if match_tit and len(match_tit.group(1).strip()) > 2 else "N/A"
         
     # MÊS
-    match_mes = re.search(r"(?:M[ÊE]S|PER[ÍI]ODO|DATA)\s*[:\-]?\s*([^\n\r]+)", texto, re.IGNORECASE)
+    match_mes = re.search(r"(?:M[ÊE]S|PER[ÍI]ODO|DATA)\s*[:\-]?\s*([^\n\r]+)", texto_upper)
     if match_mes:
-        mes = match_mes.group(1).strip()
-        mes = re.split(r"\s{2,}|\n|PROJETO|PRODUTO", mes)[0].strip()
-        dados['mes_ano'] = re.sub(r"^(M[ÊE]S DE\s*|M[ÊE]S\s*)", "", mes, flags=re.IGNORECASE)
+        mes = re.split(r"\s{2,}|\n|PROJETO|PRODUTO", match_mes.group(1))[0].strip()
+        dados['mes_ano'] = re.sub(r"^(M[ÊE]S DE\s*|M[ÊE]S\s*)", "", mes)
     else:
         dados['mes_ano'] = "Agosto/2026"
 
-    # 6. MÍDIA (PEÇA - Para APs)
-    match_peca = re.search(r"(?:PE[ÇC]A|SERVI[ÇC]O)\s*[:\-]?\s*([^\n\r]+)", texto, re.IGNORECASE)
-    peca_header = match_peca.group(1).strip() if match_peca else "Serviço de Publicidade"
-    peca_header = re.split(r"\s{2,}|\n|FORMATO", peca_header)[0].strip()
+    # 6. MÍDIA (PEÇA)
+    match_peca = re.search(r"(?:PE[ÇC]A|SERVI[ÇC]O)\s*[:\-]?\s*([^\n\r]+)", texto_upper)
+    peca_header = re.split(r"\s{2,}|\n|FORMATO", match_peca.group(1))[0].strip() if match_peca else "Serviço de Publicidade"
     
-    match_aut = re.search(r"REFERENTE\s*[AÀ]\s*([^\n\r]+)", texto, re.IGNORECASE)
+    match_aut = re.search(r"REFERENTE\s*[AÀ]\s*([^\n\r]+)", texto_upper)
     if match_aut:
         texto_peca = match_aut.group(1).strip()
     else:
-        match_veic = re.search(r"(VEICULA[ÇC][ÃA]O DE\s*[^\n\r]+)", texto, re.IGNORECASE)
+        match_veic = re.search(r"(VEICULA[ÇC][ÃA]O DE\s*[^\n\r]+)", texto_upper)
         texto_peca = match_veic.group(1).strip() if match_veic else peca_header
             
-    match_vol = re.search(r"VOLUME:\s*([^\n\r]+)", texto, re.IGNORECASE)
+    match_vol = re.search(r"VOLUME:\s*([^\n\r]+)", texto_upper)
     if match_vol and texto_peca != peca_header:
         texto_peca += f" - {match_vol.group(1).strip()}"
     dados['peca'] = texto_peca if len(texto_peca) > 2 else "Serviço de Publicidade"
 
-    # 7. PRODUÇÃO (SERVIÇOS - Para OCs)
-    # Isola o texto a partir da seção de Custos/Especificações para não confundir com outras partes
-    inicio_servicos = max(texto_upper.find("CUSTOS DE TERCEIROS"), texto_upper.find("ESPECIFICAÇÕES DO SERVIÇO"), 0)
-    bloco_servicos = texto_upper[inicio_servicos:]
-    
-    # Procura estritamente: Início da linha -> Número 1 -> Espaço -> TEXTO DO SERVIÇO
-    match_servico = re.search(r"(?:^|\n)\s*(?:1|01)\s+([^\n]+)", bloco_servicos)
-    if match_servico:
-        linha_serv = match_servico.group(1).strip()
-        # Limpa valores ou nomes que possam ter grudado na mesma linha
-        servico_limpo = re.split(r"\s{2,}|\d{1,3}\s*DFM|CNPJ|R\$|VALOR|COND\.", linha_serv, flags=re.IGNORECASE)[0].strip()
-        dados['servicos'] = servico_limpo if len(servico_limpo) > 2 else "Serviços de Produção"
+    # 7. PRODUÇÃO (SERVIÇOS)
+    # Procura a área de Opção e pega a linha que tem o número 1
+    match_serv = re.search(r"OP[ÇC][ÃA]O.*?\n\s*(?:1|01)\s+([A-Z].*?)(?:\d{1,3}\s*DFM|R\$|\d{2,}\.|CNPJ|\n|$)", texto_upper, re.DOTALL)
+    if match_serv:
+        dados['servicos'] = match_serv.group(1).strip()
     else:
         dados['servicos'] = "Serviços de Produção"
     
@@ -141,7 +122,7 @@ if st.button("🚀 Gerar Atestado Oficial", type="primary"):
     if not uploaded_file or not pi_pp_input:
         st.error("Por favor, envie o arquivo PDF e digite o número do PI/PP.")
     else:
-        with st.spinner("Analisando PDF (Extração de Precisão Ativada)..."):
+        with st.spinner("Lendo documento escaneado..."):
             pdf_bytes = uploaded_file.read()
             dados = extrair_dados_pdf_escaneado(pdf_bytes)
         
@@ -165,7 +146,6 @@ if st.button("🚀 Gerar Atestado Oficial", type="primary"):
             pdf.cell(50, 10, "EBM QUINTTO.", ln=0, align="R")
             
         pdf.ln(12)
-        
         pdf.set_draw_color(255, 204, 0)
         pdf.set_line_width(1.5)
         pdf.line(15, pdf.get_y(), 195, pdf.get_y())
@@ -186,7 +166,6 @@ if st.button("🚀 Gerar Atestado Oficial", type="primary"):
         
         pdf.set_draw_color(255, 204, 0)
         pdf.set_line_width(1.0)
-        
         pdf.set_fill_color(0, 0, 0)
         pdf.set_text_color(255, 255, 255)
         pdf.set_font("Helvetica", "B", 8)
