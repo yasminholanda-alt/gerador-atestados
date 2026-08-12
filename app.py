@@ -9,7 +9,7 @@ from pdf2image import convert_from_bytes
 st.set_page_config(page_title="Gerador de Atestados - EBM QUINTTO", page_icon="📄", layout="centered")
 
 st.title("📄 Gerador Automático de Atestados")
-st.write("Agência EBM QUINTTO Comunicação (Lê PDFs Escaneados)")
+st.write("Agência EBM QUINTTO Comunicação (Lê PDFs Escaneados - Modo Paisagem)")
 
 uploaded_file = st.file_uploader("1. Envie a AP ou OC em PDF", type=["pdf"])
 pi_pp_input = st.text_input("2. Digite o Número do PI ou PP:", placeholder="Ex: 37710")
@@ -28,7 +28,6 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
     imagens = convert_from_bytes(pdf_bytes)
     texto = ""
     for img in imagens:
-        # O comando --psm 6 ajuda o Tesseract a alinhar melhor as colunas
         texto += pytesseract.image_to_string(img, lang='por', config='--psm 6') + "\n"
         
     texto_upper = texto.upper()
@@ -77,7 +76,7 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
 
     dados['fornecedor'] = fornecedor_nome if fornecedor_nome else "FORNECEDOR NÃO IDENTIFICADO"
 
-    # 5. CAMPANHA E TÍTULO (Busca simplificada extrema)
+    # 5. CAMPANHA E TÍTULO
     match_camp = re.search(r"CAMPANHA\s*[:\.]?\s*(.*?)(?:PROJETO|PRODUTO|ESP[EÉ]CIE|T[IÍ]TULO|MEIO|FORMATO|CNPJ|\n|$)", texto_upper)
     dados['campanha'] = match_camp.group(1).strip() if match_camp and len(match_camp.group(1).strip()) > 2 else "MÍDIAS INSTITUCIONAIS"
 
@@ -109,7 +108,6 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
     dados['peca'] = texto_peca if len(texto_peca) > 2 else "Serviço de Publicidade"
 
     # 7. PRODUÇÃO (SERVIÇOS)
-    # Procura a área de Opção e pega a linha que tem o número 1
     match_serv = re.search(r"OP[ÇC][ÃA]O.*?\n\s*(?:1|01)\s+([A-Z].*?)(?:\d{1,3}\s*DFM|R\$|\d{2,}\.|CNPJ|\n|$)", texto_upper, re.DOTALL)
     if match_serv:
         dados['servicos'] = match_serv.group(1).strip()
@@ -129,7 +127,8 @@ if st.button("🚀 Gerar Atestado Oficial", type="primary"):
         meses = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
         data_hoje = f"{datetime.now().day} de {meses[datetime.now().month - 1]} de {datetime.now().year}"
         
-        pdf = FPDF()
+        # MUDANÇA AQUI: orientation='L' para Landscape (Paisagem)
+        pdf = FPDF(orientation='L')
         pdf.set_auto_page_break(auto=True, margin=10)
         pdf.add_page()
         pdf.set_margins(15, 15, 15)
@@ -140,15 +139,17 @@ if st.button("🚀 Gerar Atestado Oficial", type="primary"):
         
         logo_path = "logo ebmquintto preta BG transparente.png"
         if os.path.exists(logo_path):
-            pdf.image(logo_path, x=150, y=12, w=45)
+            # Movemos o logo mais para a direita (235) para acompanhar a folha paisagem
+            pdf.image(logo_path, x=235, y=12, w=45)
         else:
             pdf.set_font("Helvetica", "B", 16)
-            pdf.cell(50, 10, "EBM QUINTTO.", ln=0, align="R")
+            pdf.cell(137, 10, "EBM QUINTTO.", ln=0, align="R")
             
         pdf.ln(12)
         pdf.set_draw_color(255, 204, 0)
         pdf.set_line_width(1.5)
-        pdf.line(15, pdf.get_y(), 195, pdf.get_y())
+        # Linha esticada até 282 (largura total da margem)
+        pdf.line(15, pdf.get_y(), 282, pdf.get_y())
         pdf.ln(8)
         
         fornecedor_formatado = f"{dados['fornecedor']}"
@@ -171,40 +172,42 @@ if st.button("🚀 Gerar Atestado Oficial", type="primary"):
         pdf.set_font("Helvetica", "B", 8)
         
         if dados['is_midia']:
-            pdf.cell(10, 9, "#", border=1, fill=True, align="C")
-            pdf.cell(35, 9, "Planilha AP n°", border=1, fill=True, align="C")
-            pdf.cell(30, 9, "PI n°", border=1, fill=True, align="C")
-            pdf.cell(60, 9, "PEÇA", border=1, fill=True, align="C")
-            pdf.cell(45, 9, "CAMPANHA", border=1, fill=True, align="C")
+            # Larguras ajustadas para preencher os 267mm da página em Paisagem
+            pdf.cell(15, 9, "#", border=1, fill=True, align="C")
+            pdf.cell(40, 9, "Planilha AP n°", border=1, fill=True, align="C")
+            pdf.cell(40, 9, "PI n°", border=1, fill=True, align="C")
+            pdf.cell(100, 9, "PEÇA", border=1, fill=True, align="C")
+            pdf.cell(72, 9, "CAMPANHA", border=1, fill=True, align="C")
             pdf.ln()
             
             pdf.set_fill_color(255, 255, 255)
             pdf.set_text_color(0, 0, 0)
             pdf.set_font("Helvetica", "", 7.5) 
-            pdf.cell(10, 10, "1", border=1, align="C")
-            pdf.cell(35, 10, limitar_tamanho(dados['ap_oc'], 20), border=1, align="C")
-            pdf.cell(30, 10, limitar_tamanho(pi_pp_input, 15), border=1, align="C")
-            pdf.cell(60, 10, limitar_tamanho(dados['peca'], 60), border=1, align="C")
-            pdf.cell(45, 10, limitar_tamanho(dados['campanha'], 35), border=1, align="C")
+            pdf.cell(15, 10, "1", border=1, align="C")
+            pdf.cell(40, 10, limitar_tamanho(dados['ap_oc'], 20), border=1, align="C")
+            pdf.cell(40, 10, limitar_tamanho(pi_pp_input, 15), border=1, align="C")
+            pdf.cell(100, 10, limitar_tamanho(dados['peca'], 90), border=1, align="C")
+            pdf.cell(72, 10, limitar_tamanho(dados['campanha'], 50), border=1, align="C")
             
         else:
-            pdf.cell(10, 9, "#", border=1, fill=True, align="C")
-            pdf.cell(25, 9, "PP n°", border=1, fill=True, align="C")
-            pdf.cell(25, 9, "OC n°", border=1, fill=True, align="C")
-            pdf.cell(45, 9, "SERVIÇOS", border=1, fill=True, align="C")
-            pdf.cell(35, 9, "TÍTULO", border=1, fill=True, align="C")
-            pdf.cell(40, 9, "CAMPANHA", border=1, fill=True, align="C")
+            # Larguras ajustadas para Produção em Paisagem
+            pdf.cell(15, 9, "#", border=1, fill=True, align="C")
+            pdf.cell(30, 9, "PP n°", border=1, fill=True, align="C")
+            pdf.cell(30, 9, "OC n°", border=1, fill=True, align="C")
+            pdf.cell(72, 9, "SERVIÇOS", border=1, fill=True, align="C")
+            pdf.cell(60, 9, "TÍTULO", border=1, fill=True, align="C")
+            pdf.cell(60, 9, "CAMPANHA", border=1, fill=True, align="C")
             pdf.ln()
             
             pdf.set_fill_color(255, 255, 255)
             pdf.set_text_color(0, 0, 0)
             pdf.set_font("Helvetica", "", 7.5)
-            pdf.cell(10, 10, "1", border=1, align="C")
-            pdf.cell(25, 10, limitar_tamanho(pi_pp_input, 15), border=1, align="C")
-            pdf.cell(25, 10, limitar_tamanho(dados['ap_oc'], 15), border=1, align="C")
-            pdf.cell(45, 10, limitar_tamanho(dados['servicos'], 40), border=1, align="C")
-            pdf.cell(35, 10, limitar_tamanho(dados['titulo'], 30), border=1, align="C")
-            pdf.cell(40, 10, limitar_tamanho(dados['campanha'], 30), border=1, align="C")
+            pdf.cell(15, 10, "1", border=1, align="C")
+            pdf.cell(30, 10, limitar_tamanho(pi_pp_input, 15), border=1, align="C")
+            pdf.cell(30, 10, limitar_tamanho(dados['ap_oc'], 15), border=1, align="C")
+            pdf.cell(72, 10, limitar_tamanho(dados['servicos'], 65), border=1, align="C")
+            pdf.cell(60, 10, limitar_tamanho(dados['titulo'], 50), border=1, align="C")
+            pdf.cell(60, 10, limitar_tamanho(dados['campanha'], 50), border=1, align="C")
             
         pdf.ln(10)
         
@@ -219,17 +222,18 @@ if st.button("🚀 Gerar Atestado Oficial", type="primary"):
         pdf.set_font("Helvetica", "", 7)
         pdf.set_text_color(100, 100, 100)
         
-        pdf.cell(60, 3, "Fortaleza-CE", ln=0, align="C")
-        pdf.cell(60, 3, "Brasília-DF- Setor Comercial Norte,", ln=0, align="C")
-        pdf.cell(60, 3, "Bahia-BA Al. Salvador, 1057, Sl. 1411,", ln=1, align="C")
+        # Colunas do rodapé esticadas para a largura total
+        pdf.cell(89, 3, "Fortaleza-CE", ln=0, align="C")
+        pdf.cell(89, 3, "Brasília-DF- Setor Comercial Norte,", ln=0, align="C")
+        pdf.cell(89, 3, "Bahia-BA Al. Salvador, 1057, Sl. 1411,", ln=1, align="C")
         
-        pdf.cell(60, 3, "R. Beni Carvalho, 138 CEP: 60135-400", ln=0, align="C")
-        pdf.cell(60, 3, "01 Bloco D, Conj 119 Vega Luxury Mall", ln=0, align="C")
-        pdf.cell(60, 3, "Torre Europa Caminho das Arvores", ln=1, align="C")
+        pdf.cell(89, 3, "R. Beni Carvalho, 138 CEP: 60135-400", ln=0, align="C")
+        pdf.cell(89, 3, "01 Bloco D, Conj 119 Vega Luxury Mall", ln=0, align="C")
+        pdf.cell(89, 3, "Torre Europa Caminho das Arvores", ln=1, align="C")
         
-        pdf.cell(60, 3, "+55 85 3253.5555", ln=0, align="C")
-        pdf.cell(60, 3, "CEP: 70711-948 - 55 61 3525-7988", ln=0, align="C")
-        pdf.cell(60, 3, "CEP: 41820-790 +55 71 3825-3178", ln=1, align="C")
+        pdf.cell(89, 3, "+55 85 3253.5555", ln=0, align="C")
+        pdf.cell(89, 3, "CEP: 70711-948 - 55 61 3525-7988", ln=0, align="C")
+        pdf.cell(89, 3, "CEP: 41820-790 +55 71 3825-3178", ln=1, align="C")
         
         pdf.ln(2)
         pdf.set_font("Helvetica", "B", 7)
