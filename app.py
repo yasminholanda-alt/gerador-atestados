@@ -27,7 +27,6 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
     imagens = convert_from_bytes(pdf_bytes)
     texto = ""
     for img in imagens:
-        # Retornamos para a leitura padrão (mais confiável para CNPJ)
         texto += pytesseract.image_to_string(img, lang='por') + "\n"
         
     texto_upper = texto.upper()
@@ -72,8 +71,8 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
     match_camp = re.search(r"CAMPANHA\s*[:\-]?\s*([^\n\r\|]+)", texto_upper)
     dados['campanha'] = match_camp.group(1).strip() if match_camp else ""
     
-    match_tit = re.search(r"T[ÍI]TULO\s*[:\-]?\s*([^\n\r\|]+)", texto_upper)
-    dados['titulo'] = match_tit.group(1).strip() if match_tit else "N/A"
+    # O Título agora é uma cópia exata da Campanha, conforme você pediu!
+    dados['titulo'] = dados['campanha'] if dados['campanha'] else "N/A"
     
     # 6. MÊS
     match_mes = re.search(r"(?:M[ÊE]S|PER[ÍI]ODO|DATA)\s*[:\-]?\s*([^\n\r\|]+)", texto_upper)
@@ -121,7 +120,8 @@ if uploaded_file:
     with col3:
         campanha_val = st.text_input("Campanha:", value=dados['campanha'])
         peca_servico_val = st.text_input("Peça / Serviços (Pode colar textos longos aqui):", value=dados['peca'])
-        titulo_val = st.text_input("Título (Apenas Produção):", value=dados['titulo'] if doc_type == "Produção (OC)" else "N/A", disabled=doc_type == "Mídia (AP)")
+        # Título amarrado à Campanha se for Produção
+        titulo_val = st.text_input("Título (Apenas Produção):", value=campanha_val if doc_type == "Produção (OC)" else "N/A", disabled=doc_type == "Mídia (AP)")
         
     if st.button("🚀 Gerar Atestado Oficial", type="primary"):
         if not pi_pp_val:
@@ -205,7 +205,8 @@ if uploaded_file:
                 pdf.cell(30, 10, limitar_tamanho(pi_pp_val, 15), border=1, align="C")
                 pdf.cell(30, 10, limitar_tamanho(ap_oc_val, 15), border=1, align="C")
                 pdf.cell(72, 10, limitar_tamanho(peca_servico_val, 65), border=1, align="C")
-                pdf.cell(60, 10, limitar_tamanho(titulo_val, 50), border=1, align="C")
+                # Aqui o PDF vai receber a cópia da campanha se estiver gerando Produção
+                pdf.cell(60, 10, limitar_tamanho(campanha_val, 50), border=1, align="C")
                 pdf.cell(60, 10, limitar_tamanho(campanha_val, 50), border=1, align="C")
                 
             pdf.ln(10)
