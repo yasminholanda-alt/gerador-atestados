@@ -36,13 +36,6 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
     
     # 1. CLIENTE
     if "03.648.344" in texto_upper or "SERVIÇO NACIONAL DE APRENDIZAGEM COMERCIAL" in texto_upper or "SERVICO NACIONAL" in texto_upper:
-        is_senac = True
-    elif "03.612.122" in texto_upper or "SERVIÇO SOCIAL DO COMERCIO" in texto_upper or "SERVICO SOCIAL" in texto_upper:
-        is_senac = False
-    else:
-        is_senac = texto_upper.count("SENAC") > texto_upper.count("SESC")
-
-    if is_senac:
         dados['cliente_nome'] = "SERVIÇO NACIONAL DE APRENDIZAGEM COMERCIAL SENAC AR/CE"
         dados['cliente_cnpj'] = "03.648.344/0001-08"
         dados['tag_cliente'] = "SENAC"
@@ -73,41 +66,48 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
                 if "FONE" in fornecedor_nome.upper() or "FAX" in fornecedor_nome.upper():
                     fornecedor_nome = linhas[i-2] if i > 1 else fornecedor_nome
                 fornecedor_nome = re.sub(r"^(FORNECEDOR|VE[IÍ]CULO|RAZ[ÃA]O SOCIAL|EMPRESA)\s*[:\-]?\s*", "", fornecedor_nome, flags=re.IGNORECASE)
-                fornecedor_nome = re.split(r"\||\+|=|_", fornecedor_nome)[0].strip()
+                # Corta se achar condição de pagamento que as vezes fica na mesma linha na OC
+                fornecedor_nome = re.split(r"\s{2,}|\d{1,3}\s*DFM|\d{1,3}\s*DIAS|\||\+|=|_", fornecedor_nome)[0].strip()
                 break
-                
+
     if len(fornecedor_nome) < 3:
         match_fornecedor = re.search(r"(?:FORNECEDOR|VE[IÍ]CULO|RAZ[ÃA]O SOCIAL|EMPRESA)\s*[:\-]?\s*([^\n\r]+)", texto, re.IGNORECASE)
         if match_fornecedor:
             fornecedor_nome = match_fornecedor.group(1).strip()
-            fornecedor_nome = re.split(r"(MEIO:|FORMATO:|PER[ÍI]ODO:|CAMPANHA:|VALOR:|DATA:|VE[IÍ]CULO:|CNPJ:|CLIENTE:)", fornecedor_nome, flags=re.IGNORECASE)[0].strip()
+            fornecedor_nome = re.split(r"(MEIO|FORMATO|PER[ÍI]ODO|CAMPANHA|VALOR|DATA|VE[IÍ]CULO|CNPJ|CLIENTE)", fornecedor_nome, flags=re.IGNORECASE)[0].strip()
             fornecedor_nome = re.split(r"\||\+|=|_", fornecedor_nome)[0].strip()
 
     dados['fornecedor'] = fornecedor_nome.upper() if fornecedor_nome else "FORNECEDOR NÃO IDENTIFICADO"
 
-    # 5. LISTA ANTI-SUJEIRA REFINADA COM DOIS PONTOS OBRIGATÓRIOS
-    # Isso impede que o sistema corte o texto se a palavra estiver no meio de uma frase (ex: PRODUCAO CAMPANHA AZUL)
-    stop_words = r"(ACABAMENTO:|VALIDADE:|PRODUTO:|ESP[EÉ]CIE:|T[ÍI]TULO:|MEIO:|FORMATO:|PER[ÍI]ODO:|CAMPANHA:|VALOR:|DATA:|VE[IÍ]CULO:|CNPJ:|CLIENTE:|PROJETO:|CORES:|PZ\.ENTREGA:|A CLIENTE:)"
-    
-    def extrair_linha_limpa(padrao, default):
-        match = re.search(padrao, texto, re.IGNORECASE)
-        if match:
-            res = match.group(1).strip()
-            # Corta se encontrar outra categoria com ":" ou traços de tabela
-            res = re.split(stop_words, res, flags=re.IGNORECASE)[0].strip()
-            res = re.split(r"\||\+|=|_", res)[0].strip()
-            return res if len(res) > 2 else default
-        return default
+    # 5. CAMPANHA E TÍTULO (Com travas cirúrgicas de bloqueio)
+    # Pega tudo na frente de CAMPANHA até bater em 2 espaços vazios, quebra de linha ou nas palavras da coluna do lado.
+    match_camp = re.search(r"CAMPANHA\s*[:\.]?\s*(.*?)(?=\s{2,}|\n|PROJETO|PRODUTO|ESP[EÉ]CIE|T[IÍ]TULO|MEIO|FORMATO)", texto_upper)
+    if match_camp and len(match_camp.group(1).strip()) > 2:
+        dados['campanha'] = match_camp.group(1).strip()
+    else:
+        dados['campanha'] = "MÍDIAS INSTITUCIONAIS"
 
-    # CAMPANHA E TÍTULO
-    dados['campanha'] = extrair_linha_limpa(r"CAMPANHA\s*[:\-]?\s*([^\n\r]+)", "MÍDIAS INSTITUCIONAIS")
-    dados['titulo'] = extrair_linha_limpa(r"T[ÍI]TULO\s*[:\-]?\s*([^\n\r]+)", "N/A")
-    
-    mes = extrair_linha_limpa(r"(?:M[ÊE]S|PER[ÍI]ODO|DATA)\s*[:\-]?\s*([^\n\r]+)", "Agosto/2026")
-    dados['mes_ano'] = re.sub(r"^(M[ÊE]S DE\s*|M[ÊE]S\s*)", "", mes, flags=re.IGNORECASE)
+    # Pega tudo na frente de TÍTULO até bater em 2 espaços vazios, quebra de linha ou nas palavras da coluna do lado.
+    match_tit = re.search(r"T[IÍ]TULO\s*[:\.]?\s*(.*?)(?=\s{2,}|\n|ACABAMENTO|VALIDADE|CORES|PZ\.ENTREGA)", texto_upper)
+    if match_tit and len(match_tit.group(1).strip()) > 2:
+        dados['titulo'] = match_tit.group(1).strip()
+    else:
+        dados['titulo'] = "N/A"
+        
+    # MÊS
+    match_mes = re.search(r"(?:M[ÊE]S|PER[ÍI]ODO|DATA)\s*[:\-]?\s*([^\n\r]+)", texto, re.IGNORECASE)
+    if match_mes:
+        mes = match_mes.group(1).strip()
+        mes = re.split(r"\s{2,}|\n|PROJETO|PRODUTO", mes)[0].strip()
+        dados['mes_ano'] = re.sub(r"^(M[ÊE]S DE\s*|M[ÊE]S\s*)", "", mes, flags=re.IGNORECASE)
+    else:
+        dados['mes_ano'] = "Agosto/2026"
 
-    # 6. MÍDIA (PEÇA)
-    peca_header = extrair_linha_limpa(r"(?:PE[ÇC]A|SERVI[ÇC]O)\s*[:\-]?\s*([^\n\r]+)", "Serviço de Publicidade")
+    # 6. MÍDIA (PEÇA - Para APs)
+    match_peca = re.search(r"(?:PE[ÇC]A|SERVI[ÇC]O)\s*[:\-]?\s*([^\n\r]+)", texto, re.IGNORECASE)
+    peca_header = match_peca.group(1).strip() if match_peca else "Serviço de Publicidade"
+    peca_header = re.split(r"\s{2,}|\n|FORMATO", peca_header)[0].strip()
+    
     match_aut = re.search(r"REFERENTE\s*[AÀ]\s*([^\n\r]+)", texto, re.IGNORECASE)
     if match_aut:
         texto_peca = match_aut.group(1).strip()
@@ -120,12 +120,16 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
         texto_peca += f" - {match_vol.group(1).strip()}"
     dados['peca'] = texto_peca if len(texto_peca) > 2 else "Serviço de Publicidade"
 
-    # 7. PRODUÇÃO (SERVIÇOS)
-    # Procura pela tarja ESPECIFICAÇÕES DO SERVIÇO ou DESCRIÇÃO e pega a primeira linha numerada "1"
-    match_servico = re.search(r"(?:ESPECIFICA[ÇC][ÕO]ES|DESCRI[ÇC][ÃA]O/FORNECEDOR)[\s\S]{1,300}?(?:^|\n)\s*(?:1|01)[\s\-]*([A-Za-z][^\n\r]+)", texto, re.IGNORECASE)
+    # 7. PRODUÇÃO (SERVIÇOS - Para OCs)
+    # Isola o texto a partir da seção de Custos/Especificações para não confundir com outras partes
+    inicio_servicos = max(texto_upper.find("CUSTOS DE TERCEIROS"), texto_upper.find("ESPECIFICAÇÕES DO SERVIÇO"), 0)
+    bloco_servicos = texto_upper[inicio_servicos:]
+    
+    # Procura estritamente: Início da linha -> Número 1 -> Espaço -> TEXTO DO SERVIÇO
+    match_servico = re.search(r"(?:^|\n)\s*(?:1|01)\s+([^\n]+)", bloco_servicos)
     if match_servico:
         linha_serv = match_servico.group(1).strip()
-        # Para a leitura assim que achar DFM, Condições, CNPJ ou espaços muito longos que dividem colunas
+        # Limpa valores ou nomes que possam ter grudado na mesma linha
         servico_limpo = re.split(r"\s{2,}|\d{1,3}\s*DFM|CNPJ|R\$|VALOR|COND\.", linha_serv, flags=re.IGNORECASE)[0].strip()
         dados['servicos'] = servico_limpo if len(servico_limpo) > 2 else "Serviços de Produção"
     else:
@@ -137,7 +141,7 @@ if st.button("🚀 Gerar Atestado Oficial", type="primary"):
     if not uploaded_file or not pi_pp_input:
         st.error("Por favor, envie o arquivo PDF e digite o número do PI/PP.")
     else:
-        with st.spinner("Analisando PDF (Extraindo Serviços, Título e Campanha)..."):
+        with st.spinner("Analisando PDF (Extração de Precisão Ativada)..."):
             pdf_bytes = uploaded_file.read()
             dados = extrair_dados_pdf_escaneado(pdf_bytes)
         
