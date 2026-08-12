@@ -1,7 +1,6 @@
 import streamlit as st
 import pypdf
 import re
-import io
 import os
 from fpdf import FPDF
 
@@ -94,7 +93,7 @@ if st.button("🚀 Gerar Atestado PDF", type="primary"):
         
         # Linha Amarela
         pdf.set_draw_color(255, 204, 0)
-        pdf.set_linewidth(1.2)
+        pdf.set_line_width(1.2)
         pdf.line(15, 32, 195, 32)
         pdf.ln(12)
         
@@ -137,11 +136,12 @@ if st.button("🚀 Gerar Atestado PDF", type="primary"):
         pdf.cell(0, 6, f"Fortaleza/CE, {data_emissao}.", ln=1)
         pdf.ln(4)
         
-        # Insere assinatura se o arquivo existir na pasta
+        # Assinatura
         if os.path.exists("luma_signature_perfect.png"):
             pdf.image("luma_signature_perfect.png", x=15, w=55)
             
         pdf.set_draw_color(17, 17, 17)
+        pdf.set_line_width(0.5)
         pdf.line(15, pdf.get_y(), 80, pdf.get_y())
         pdf.ln(2)
         
