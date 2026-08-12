@@ -61,7 +61,6 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
     dados['ap_oc'] = match_ap.group(1) if match_ap else (match_oc.group(1) if match_oc else "N/A")
     
     # 3. EXTRAI O CNPJ DO FORNECEDOR/VEÍCULO 
-    # (Ignorando os CNPJs do SESC, SENAC e da própria EBM QUINTTO)
     cnpjs_ignorados = ["03.612.122/0001-27", "03.648.344/0001-08", "14.470.051/0001-91"]
     cnpjs_encontrados = re.findall(r"\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}", texto)
     
@@ -72,7 +71,7 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
             break
     dados['fornecedor_cnpj'] = fornecedor_cnpj
     
-    # 4. EXTRAI A RAZÃO SOCIAL DO FORNECEDOR (Lendo a linha acima do CNPJ)
+    # 4. EXTRAI A RAZÃO SOCIAL DO FORNECEDOR
     fornecedor_nome = ""
     linhas = [l.strip() for l in texto.split('\n') if l.strip()]
     
@@ -80,18 +79,13 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
         for i, linha in enumerate(linhas):
             if fornecedor_cnpj in linha and i > 0:
                 fornecedor_nome = linhas[i-1]
-                
-                # Trava de segurança: Se a linha de cima for Telefone/Fax, sobe mais uma linha
                 if "FONE" in fornecedor_nome.upper() or "FAX" in fornecedor_nome.upper():
                     fornecedor_nome = linhas[i-2] if i > 1 else fornecedor_nome
                     
                 fornecedor_nome = re.sub(r"^(FORNECEDOR|VE[IÍ]CULO|RAZ[ÃA]O SOCIAL|EMPRESA)\s*[:\-]?\s*", "", fornecedor_nome, flags=re.IGNORECASE)
-                
-                # Filtro Anti-Sujeira OCR: Corta o texto se encontrar caracteres de borda de tabela
                 fornecedor_nome = re.split(r"\||\+|=|_", fornecedor_nome)[0].strip()
                 break
                 
-    # Fallback se não encontrar o CNPJ corretamente
     if len(fornecedor_nome) < 3:
         match_fornecedor = re.search(r"(?:FORNECEDOR|VE[IÍ]CULO|RAZ[ÃA]O SOCIAL|EMPRESA)\s*[:\-]?\s*([^\n\r]+)", texto, re.IGNORECASE)
         if match_fornecedor:
@@ -101,7 +95,7 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
 
     dados['fornecedor'] = fornecedor_nome.upper() if fornecedor_nome else "FORNECEDOR NÃO IDENTIFICADO"
 
-    # 5. DEMAIS DADOS
+    # 5. DEMAIS DADOS (CAMPANHA, MÊS)
     def extrair_e_limpar(padrao):
         match = re.search(padrao, texto, re.IGNORECASE)
         if match:
@@ -113,13 +107,32 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
     campanha = extrair_e_limpar(r"CAMPANHA:\s*([^\n\r]+)")
     dados['campanha'] = campanha if campanha else "MÍDIAS INSTITUCIONAIS"
     
-    peca = extrair_e_limpar(r"(?:PE[ÇC]A|SERVI[ÇC]O|T[ÍI]TULO)\s*[:\-]?\s*([^\n\r]+)")
-    dados['peca'] = peca if peca else "Serviço de Publicidade"
-    
     mes = extrair_e_limpar(r"(?:M[ÊE]S|PER[ÍI]ODO|DATA)\s*[:\-]?\s*([^\n\r]+)")
-    # Limpa possíveis duplicações de "mês" para encaixar perfeitamente no texto final
     mes = re.sub(r"^(M[ÊE]S DE\s*|M[ÊE]S\s*)", "", mes, flags=re.IGNORECASE) if mes else "Agosto/2026"
     dados['mes_ano'] = mes
+
+    # 6. NOVA LÓGICA DE EXTRAÇÃO PARA A "PEÇA" (Busca detalhada)
+    peca_header = extrair_e_limpar(r"(?:PE[ÇC]A|SERVI[ÇC]O|T[ÍI]TULO)\s*[:\-]?\s*([^\n\r]+)")
+    
+    match_aut = re.search(r"REFERENTE\s*[AÀ]\s*([^\n\r]+)", texto, re.IGNORECASE)
+    if match_aut:
+        texto_peca = match_aut.group(1).strip()
+    else:
+        match_veic = re.search(r"(VEICULA[ÇC][ÃA]O DE\s*[^\n\r]+)", texto, re.IGNORECASE)
+        if match_veic:
+            texto_peca = match_veic.group(1).strip()
+        else:
+            texto_peca = peca_header
+            
+    # Tenta pegar informações de VOLUME/FACES se existir logo abaixo
+    match_vol = re.search(r"VOLUME:\s*([^\n\r]+)", texto, re.IGNORECASE)
+    if match_vol and texto_peca != peca_header:
+        texto_peca += f" - {match_vol.group(1).strip()}"
+        
+    if not texto_peca or len(texto_peca) < 3:
+        texto_peca = "Serviço de Publicidade"
+        
+    dados['peca'] = texto_peca
     
     return dados
 
@@ -127,7 +140,7 @@ if st.button("🚀 Gerar Atestado Oficial", type="primary"):
     if not uploaded_file or not pi_pp_input:
         st.error("Por favor, envie o arquivo PDF e digite o número do PI/PP.")
     else:
-        with st.spinner("Analisando PDF e extraindo Razão Social/CNPJ..."):
+        with st.spinner("Analisando PDF e extraindo informações da Peça/Volume..."):
             pdf_bytes = uploaded_file.read()
             dados = extrair_dados_pdf_escaneado(pdf_bytes)
         
@@ -164,7 +177,7 @@ if st.button("🚀 Gerar Atestado Oficial", type="primary"):
         if dados['fornecedor_cnpj']:
             fornecedor_formatado += f", CNPJ: {dados['fornecedor_cnpj']}"
 
-        # Texto Principal (com o "no mês de" adicionado)
+        # Texto Principal
         pdf.set_font("Helvetica", "", 10)
         if dados['is_midia']:
             texto = f"Atestamos para fins de comprovação de execução de serviço prestados que no mês de {dados['mes_ano']}, o veículo {fornecedor_formatado} a veiculações de mídias publicitárias do cliente {dados['cliente_nome']}, CNPJ {dados['cliente_cnpj']} intermediadas por essa agência de publicidade no período de acordo com as planilhas de AP e PI relacionadas abaixo."
@@ -192,12 +205,13 @@ if st.button("🚀 Gerar Atestado Oficial", type="primary"):
             
             pdf.set_fill_color(255, 255, 255)
             pdf.set_text_color(0, 0, 0)
-            pdf.set_font("Helvetica", "", 8)
+            pdf.set_font("Helvetica", "", 7.5) # Fonte sutilmente menor para caber mais
             pdf.cell(10, 10, "1", border=1, align="C")
             pdf.cell(35, 10, limitar_tamanho(dados['ap_oc'], 20), border=1, align="C")
             pdf.cell(30, 10, limitar_tamanho(pi_pp_input, 15), border=1, align="C")
-            pdf.cell(60, 10, limitar_tamanho(dados['peca'], 40), border=1, align="C")
-            pdf.cell(45, 10, limitar_tamanho(dados['campanha'], 25), border=1, align="C")
+            # Aumentado o limite de caracteres da peça para 60 para acomodar a frase da autorização
+            pdf.cell(60, 10, limitar_tamanho(dados['peca'], 60), border=1, align="C")
+            pdf.cell(45, 10, limitar_tamanho(dados['campanha'], 35), border=1, align="C")
             
         else:
             pdf.cell(10, 9, "#", border=1, fill=True, align="C")
@@ -210,13 +224,13 @@ if st.button("🚀 Gerar Atestado Oficial", type="primary"):
             
             pdf.set_fill_color(255, 255, 255)
             pdf.set_text_color(0, 0, 0)
-            pdf.set_font("Helvetica", "", 8)
+            pdf.set_font("Helvetica", "", 7.5)
             pdf.cell(10, 10, "1", border=1, align="C")
             pdf.cell(25, 10, limitar_tamanho(pi_pp_input, 15), border=1, align="C")
             pdf.cell(25, 10, limitar_tamanho(dados['ap_oc'], 15), border=1, align="C")
-            pdf.cell(45, 10, limitar_tamanho(dados['peca'], 28), border=1, align="C")
-            pdf.cell(35, 10, limitar_tamanho(dados['peca'], 20), border=1, align="C")
-            pdf.cell(40, 10, limitar_tamanho(dados['campanha'], 22), border=1, align="C")
+            pdf.cell(45, 10, limitar_tamanho(dados['peca'], 40), border=1, align="C")
+            pdf.cell(35, 10, limitar_tamanho(dados['peca'], 30), border=1, align="C")
+            pdf.cell(40, 10, limitar_tamanho(dados['campanha'], 30), border=1, align="C")
             
         pdf.ln(10)
         
