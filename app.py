@@ -1,3 +1,4 @@
+
 import streamlit as st
 import re
 import os
@@ -113,7 +114,9 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
     dados['peca'] = peca if peca else "Serviço de Publicidade"
     
     mes = extrair_e_limpar(r"(?:M[ÊE]S|PER[ÍI]ODO|DATA)\s*[:\-]?\s*([^\n\r]+)")
-    dados['mes_ano'] = mes if mes else "Agosto de 2026"
+    # Limpa possíveis duplicações de "mês" para encaixar perfeitamente no texto final
+    mes = re.sub(r"^(M[ÊE]S DE\s*|M[ÊE]S\s*)", "", mes, flags=re.IGNORECASE) if mes else "Agosto/2026"
+    dados['mes_ano'] = mes
     
     return dados
 
@@ -158,10 +161,10 @@ if st.button("🚀 Gerar Atestado Oficial", type="primary"):
         if dados['fornecedor_cnpj']:
             fornecedor_formatado += f", CNPJ: {dados['fornecedor_cnpj']}"
 
-        # Texto Principal
+        # Texto Principal (com o "no mês de" adicionado)
         pdf.set_font("Helvetica", "", 10)
         if dados['is_midia']:
-            texto = f"Atestamos para fins de comprovação de execução de serviço prestados que no {dados['mes_ano']}, o veículo {fornecedor_formatado} a veiculações de mídias publicitárias do cliente {dados['cliente_nome']}, CNPJ {dados['cliente_cnpj']} intermediadas por essa agência de publicidade no período de acordo com as planilhas de AP e PI relacionadas abaixo."
+            texto = f"Atestamos para fins de comprovação de execução de serviço prestados que no mês de {dados['mes_ano']}, o veículo {fornecedor_formatado} a veiculações de mídias publicitárias do cliente {dados['cliente_nome']}, CNPJ {dados['cliente_cnpj']} intermediadas por essa agência de publicidade no período de acordo com as planilhas de AP e PI relacionadas abaixo."
         else:
             texto = f"Atestamos para fins de comprovação de execução de serviço prestados, que o fornecedor {fornecedor_formatado} produziu material publicitário para o {dados['cliente_nome']}, CNPJ {dados['cliente_cnpj']} intermediadas por essa agência de publicidade no período de acordo com as OC e PP relacionadas abaixo."
             
