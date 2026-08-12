@@ -2,15 +2,15 @@ import streamlit as st
 import pypdf
 import re
 import base64
-from weasyprint import HTML
+from fpdf import FPDF
+import io
 
-# Configuração da página e título do site
+# Configuração da página
 st.set_page_config(page_title="Gerador de Atestados - EBM QUINTTO", page_icon="📄", layout="centered")
 
 st.title("📄 Gerador de Atestados Sesc / Senac")
 st.write("Agência EBM QUINTTO Comunicação")
 
-# 1. Campos de Entrada da Interface
 uploaded_file = st.file_uploader("Envie a AP ou OC em PDF", type=["pdf"])
 doc_type = st.radio("Tipo de Serviço:", ["Mídia (AP)", "Produção (OC)"])
 
@@ -21,14 +21,11 @@ else:
 
 data_emissao = st.text_input("Data de Emissão do Atestado:", value="12 de Agosto de 2026")
 
-# 2. Função para ler o PDF enviado
 def extrair_dados_pdf(pdf_file):
     reader = pypdf.PdfReader(pdf_file)
     texto = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
     
     dados = {}
-    
-    # Identifica o cliente pelo CNPJ no texto
     if "03.612.122/0001-27" in texto or "SESC" in texto.upper():
         dados['cliente_nome'] = "SERVIÇO SOCIAL DO COMERCIO SESC AR/CE"
         dados['cliente_cnpj'] = "03.612.122/0001-27"
@@ -38,133 +35,129 @@ def extrair_dados_pdf(pdf_file):
         dados['cliente_cnpj'] = "03.648.344/0001-08"
         dados['tag_cliente'] = "SENAC"
         
-    # Extrai o número da Planilha AP ou da OC limpando os zeros à esquerda
     match_ap = re.search(r"Nº\s*PLANILHA:\s*0*(\d+)", texto, re.IGNORECASE)
     match_oc = re.search(r"OC\s*0*(\d+)", texto, re.IGNORECASE)
-    
     dados['planilha_num'] = match_ap.group(1) if match_ap else (match_oc.group(1) if match_oc else "N/A")
     
-    # Extrai a campanha
     match_campanha = re.search(r"CAMPANHA:\s*([^\n]+)", texto, re.IGNORECASE)
     dados['campanha'] = match_campanha.group(1).strip() if match_campanha else "MÍDIAS INSTITUCIONAIS"
-    
     return dados
 
-# 3. Botão para acionar a geração do PDF
+class AtestadoPDF(FPDF):
+    def footer(self):
+        self.set_y(-25)
+        self.set_draw_color(220, 220, 220)
+        self.line(15, self.get_y(), 195, self.get_y())
+        self.set_font("Helvetica", "", 7)
+        self.set_text_color(100, 100, 100)
+        
+        # Endereços
+        self.cell(60, 4, "Fortaleza-CE", ln=0, align="C")
+        self.cell(60, 4, "Brasília-DF", ln=0, align="C")
+        self.cell(60, 4, "Bahia-BA", ln=1, align="C")
+        
+        self.cell(60, 3, "R. Beni Carvalho, 138", ln=0, align="C")
+        self.cell(60, 3, "Setor Comercial Norte, Q. 01 Bl. D", ln=0, align="C")
+        self.cell(60, 3, "Al. Salvador, 1057, Sl. 1411", ln=1, align="C")
+        
+        self.cell(60, 3, "CEP: 60135-400 | +55 85 3253.5555", ln=0, align="C")
+        self.cell(60, 3, "CEP: 70711-948 | +55 61 3525-7988", ln=0, align="C")
+        self.cell(60, 3, "CEP: 41820-790 | +55 71 3825-3178", ln=1, align="C")
+        
+        self.ln(2)
+        self.set_font("Helvetica", "B", 7)
+        self.cell(0, 3, "ebmquintto.com.br | @ebmquintto", align="C")
+
 if st.button("🚀 Gerar Atestado", type="primary"):
-    if not uploaded_file:
-        st.error("Por favor, anexe o arquivo PDF da AP ou OC.")
-    elif not num_id:
-        st.error("Por favor, informe o número da PI ou PP.")
+    if not uploaded_file or not num_id:
+        st.error("Por favor, anexe o PDF e preencha o número do PI/PP.")
     else:
         dados = extrair_dados_pdf(uploaded_file)
-        
-        # Carrega a imagem da assinatura
-        with open("luma_signature_perfect.png", "rb") as f:
-            encoded_sig = base64.b64encode(f.read()).decode('utf-8')
-            
         is_midia = (doc_type == "Mídia (AP)")
-        titulo_doc = f"ATESTADO DE VEICULAÇÃO DE MÍDIA | {dados['tag_cliente']}" if is_midia else f"ATESTADO DE PRODUÇÃO – {dados['tag_cliente']}"
         
-        col1_header = "PLANILHA AP Nº" if is_midia else "PP Nº"
-        col2_header = "PI Nº" if is_midia else "OC Nº"
-        col3_header = "PEÇA" if is_midia else "SERVIÇOS"
+        pdf = AtestadoPDF()
+        pdf.add_page()
+        pdf.set_margins(15, 15, 15)
         
-        # Layout em HTML/CSS para a WeasyPrint converter em PDF
-        html_code = f"""
-        <!DOCTYPE html>
-        <html lang="pt-BR">
-        <head>
-        <meta charset="UTF-8">
-        <style>
-          @page {{ size: A4 portrait; margin: 18mm 15mm 20mm 15mm; @bottom-center {{ content: element(footer); }} }}
-          * {{ box-sizing: border-box; }}
-          body {{ font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #222222; font-size: 10.5pt; line-height: 1.6; margin: 0; padding: 0; }}
-          .header {{ display: table; width: 100%; margin-bottom: 30px; border-bottom: 2.5px solid #ffcc00; padding-bottom: 15px; }}
-          .header-left {{ display: table-cell; vertical-align: middle; }}
-          .header-right {{ display: table-cell; text-align: right; vertical-align: middle; }}
-          .doc-title {{ font-size: 13pt; font-weight: 800; color: #111111; text-transform: uppercase; letter-spacing: 0.5px; }}
-          .brand-logo {{ font-size: 20pt; font-weight: 900; line-height: 0.9; color: #111111; letter-spacing: -0.5px; }}
-          .brand-dot {{ color: #ffcc00; }}
-          .brand-sub {{ font-size: 7.5pt; font-weight: bold; color: #555555; letter-spacing: 3.5px; margin-top: 3px; text-transform: uppercase; }}
-          .declaration-text {{ text-align: justify; margin-bottom: 25px; font-size: 10.5pt; line-height: 1.75; }}
-          .highlight {{ font-weight: bold; color: #000000; }}
-          table.data-table {{ width: 100%; border-collapse: collapse; margin-top: 20px; margin-bottom: 30px; }}
-          table.data-table th {{ background-color: #111111; color: #ffffff; font-size: 8.5pt; font-weight: bold; text-transform: uppercase; padding: 10px 8px; border: 1px solid #111111; text-align: center; }}
-          table.data-table td {{ padding: 12px 10px; border: 1px solid #d1d5db; font-size: 9pt; text-align: center; vertical-align: middle; background-color: #fdfdfd; }}
-          .date-section {{ margin-top: 35px; margin-bottom: 35px; font-size: 10.5pt; }}
-          .signature-container {{ margin-top: 10px; width: 320px; }}
-          .signature-img-wrap img {{ height: 52px; width: auto; display: block; }}
-          .signature-line {{ border-top: 1.5px solid #111111; margin-top: 2px; margin-bottom: 8px; }}
-          .signature-company {{ font-weight: 800; font-size: 8.5pt; color: #111111; text-transform: uppercase; }}
-          .signature-name {{ font-weight: bold; font-size: 10.5pt; color: #111111; margin-top: 2px; }}
-          .signature-title {{ font-size: 9pt; color: #444444; }}
-          .footer-container {{ position: running(footer); width: 100%; border-top: 1px solid #e5e7eb; padding-top: 10px; font-size: 7.5pt; color: #555555; line-height: 1.45; }}
-          .footer-cols {{ display: table; width: 100%; }}
-          .footer-col {{ display: table-cell; width: 33.33%; vertical-align: top; }}
-          .city-title {{ font-weight: bold; color: #111111; }}
-          .footer-web {{ text-align: center; margin-top: 8px; border-top: 1px solid #f3f4f6; padding-top: 5px; font-weight: bold; color: #333333; }}
-        </style>
-        </head>
-        <body>
-        <div class="header">
-          <div class="header-left"><div class="doc-title">{titulo_doc}</div></div>
-          <div class="header-right">
-            <div class="brand-logo">EBM<br>QUINTTO<span class="brand-dot">.</span></div>
-            <div class="brand-sub">COMUNICAÇÃO</div>
-          </div>
-        </div>
-        <div class="content">
-          <p class="declaration-text">
-            Atestamos para fins de comprovação de execução de serviço prestados para o cliente <span class="highlight">{dados['cliente_nome']}</span>, CNPJ <span class="highlight">{dados['cliente_cnpj']}</span>, intermediadas por essa agência de publicidade no período de acordo com as informações relacionadas abaixo.
-          </p>
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th style="width: 5%;">#</th>
-                <th style="width: 22%;">{col1_header}</th>
-                <th style="width: 18%;">{col2_header}</th>
-                <th style="width: 30%;">{col3_header}</th>
-                <th style="width: 25%;">CAMPANHA</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>1</td>
-                <td>{dados['planilha_num']}</td>
-                <td>{num_id}</td>
-                <td>Serviço de Publicidade / Mídia Contratado</td>
-                <td>{dados['campanha']}</td>
-              </tr>
-            </tbody>
-          </table>
-          <div class="date-section">Fortaleza/CE, {data_emissao}.</div>
-          <div class="signature-container">
-            <div class="signature-img-wrap"><img src="data:image/png;base64,{encoded_sig}"></div>
-            <div class="signature-line"></div>
-            <div class="signature-company">EBM QUINTTO COMUNICAÇÃO LTDA</div>
-            <div class="signature-name">Luma Oliveira</div>
-            <div class="signature-title">Analista Financeiro</div>
-          </div>
-        </div>
-        <div class="footer-container" id="footer">
-          <div class="footer-cols">
-            <div class="footer-col"><span class="city-title">Fortaleza-CE</span><br>R. Beni Carvalho, 138<br>CEP: 60135-400 | +55 85 3253.5555</div>
-            <div class="footer-col"><span class="city-title">Brasília-DF</span><br>Setor Comercial Norte, Q. 01 Bloco D, Conj. 119 - Vega Luxury Mall<br>CEP: 70711-948 | +55 61 3525-7988</div>
-            <div class="footer-col"><span class="city-title">Bahia-BA</span><br>Al. Salvador, 1057, Sl. 1411 - Torre Europa, Caminho das Árvores<br>CEP: 41820-790 | +55 71 3825-3178</div>
-          </div>
-          <div class="footer-web">ebmquintto.com.br | @ebmquintto</div>
-        </div>
-        </body>
-        </html>
-        """
+        # Cabeçalho
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.set_text_color(17, 17, 17)
+        titulo = f"ATESTADO DE VEICULAÇÃO DE MÍDIA | {dados['tag_cliente']}" if is_midia else f"ATESTADO DE PRODUÇÃO – {dados['tag_cliente']}"
+        pdf.cell(120, 10, titulo, ln=0)
         
-        pdf_bytes = HTML(string=html_code).write_pdf()
+        pdf.set_font("Helvetica", "B", 16)
+        pdf.cell(60, 6, "EBM", ln=1, align="R")
+        pdf.cell(180, 6, "QUINTTO.", ln=1, align="R")
+        
+        # Linha Amarela
+        pdf.set_draw_color(255, 204, 0)
+        pdf.set_linewidth(1)
+        pdf.line(15, 32, 195, 32)
+        pdf.ln(10)
+        
+        # Texto
+        pdf.set_font("Helvetica", "", 10)
+        pdf.set_text_color(34, 34, 34)
+        texto = f"Atestamos para fins de comprovação de execução de serviço prestados para o cliente {dados['cliente_nome']}, CNPJ {dados['cliente_cnpj']}, intermediadas por essa agência de publicidade no período de acordo com as informações relacionadas abaixo."
+        pdf.multi_cell(0, 6, texto)
+        pdf.ln(6)
+        
+        # Tabela
+        col1 = "PLANILHA AP Nº" if is_midia else "PP Nº"
+        col2 = "PI Nº" if is_midia else "OC Nº"
+        col3 = "PEÇA" if is_midia else "SERVIÇOS"
+        
+        pdf.set_fill_color(17, 17, 17)
+        pdf.set_text_color(255, 255, 255)
+        pdf.set_font("Helvetica", "B", 8)
+        
+        pdf.cell(10, 8, "#", border=1, fill=True, align="C")
+        pdf.cell(35, 8, col1, border=1, fill=True, align="C")
+        pdf.cell(30, 8, col2, border=1, fill=True, align="C")
+        pdf.cell(55, 8, col3, border=1, fill=True, align="C")
+        pdf.cell(50, 8, "CAMPANHA", border=1, fill=True, align="C")
+        pdf.ln()
+        
+        pdf.set_fill_color(253, 253, 253)
+        pdf.set_text_color(34, 34, 34)
+        pdf.set_font("Helvetica", "", 8)
+        
+        pdf.cell(10, 10, "1", border=1, align="C")
+        pdf.cell(35, 10, str(dados['planilha_num']), border=1, align="C")
+        pdf.cell(30, 10, str(num_id), border=1, align="C")
+        pdf.cell(55, 10, "Serviço de Publicidade / Mídia", border=1, align="C")
+        pdf.cell(50, 10, str(dados['campanha']), border=1, align="C")
+        pdf.ln(15)
+        
+        # Data
+        pdf.set_font("Helvetica", "", 10)
+        pdf.cell(0, 6, f"Fortaleza/CE, {data_emissao}.", ln=1)
+        pdf.ln(5)
+        
+        # Assinatura Image
+        try:
+            pdf.image("luma_signature_perfect.png", x=15, w=50)
+        except:
+            pass
+            
+        pdf.set_draw_color(17, 17, 17)
+        pdf.line(15, pdf.get_y(), 80, pdf.get_y())
+        pdf.ln(2)
+        
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.cell(0, 4, "EBM QUINTTO COMUNICAÇÃO LTDA", ln=1)
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.cell(0, 5, "Luma Oliveira", ln=1)
+        pdf.set_font("Helvetica", "", 9)
+        pdf.cell(0, 4, "Analista Financeiro", ln=1)
+        
+        pdf_out = io.BytesIO()
+        pdf_bytes = pdf.output(dest='S')
         
         st.success("✅ Atestado gerado com sucesso!")
         st.download_button(
-            label="📥 Baixar Atestado em PDF",
-            data=pdf_bytes,
+            label="📥 Baixar Atestado PDF",
+            data=bytes(pdf_bytes),
             file_name=f"ATESTADO_{dados['tag_cliente']}_{num_id}.pdf",
             mime="application/pdf"
         )
