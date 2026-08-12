@@ -6,13 +6,12 @@ from fpdf import FPDF
 import pytesseract
 from pdf2image import convert_from_bytes
 
-st.set_page_config(page_title="Gerador de Atestados - EBM QUINTTO", page_icon="📄", layout="centered")
+st.set_page_config(page_title="Gerador de Atestados - EBM QUINTTO", page_icon="📄", layout="wide")
 
 st.title("📄 Gerador Automático de Atestados")
-st.write("Agência EBM QUINTTO Comunicação (Lê PDFs Escaneados - Modo Paisagem)")
+st.write("Agência EBM QUINTTO Comunicação (Modo Paisagem com Revisão)")
 
-uploaded_file = st.file_uploader("1. Envie a AP ou OC em PDF", type=["pdf"])
-pi_pp_input = st.text_input("2. Digite o Número do PI ou PP:", placeholder="Ex: 37710")
+uploaded_file = st.file_uploader("1. Envie a AP ou OC em PDF escaneado", type=["pdf"])
 
 def limpar_texto(texto):
     if not texto: return ""
@@ -28,13 +27,14 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
     imagens = convert_from_bytes(pdf_bytes)
     texto = ""
     for img in imagens:
-        texto += pytesseract.image_to_string(img, lang='por', config='--psm 6') + "\n"
+        # Retornamos para a leitura padrão (mais confiável para CNPJ)
+        texto += pytesseract.image_to_string(img, lang='por') + "\n"
         
     texto_upper = texto.upper()
     dados = {}
     
     # 1. CLIENTE
-    if "03.648.344" in texto_upper or "SERVIÇO NACIONAL" in texto_upper or "SERVICO NACIONAL" in texto_upper:
+    if "03.648.344" in texto_upper or "SERVIÇO NACIONAL DE APRENDIZAGEM" in texto_upper:
         dados['cliente_nome'] = "SERVIÇO NACIONAL DE APRENDIZAGEM COMERCIAL SENAC AR/CE"
         dados['cliente_cnpj'] = "03.648.344/0001-08"
         dados['tag_cliente'] = "SENAC"
@@ -43,208 +43,206 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
         dados['cliente_cnpj'] = "03.612.122/0001-27"
         dados['tag_cliente'] = "SESC"
         
-    # 2. AP OU OC
+    # 2. TIPO E NÚMERO (AP/OC)
     match_ap = re.search(r"(?:PLANILHA|AP|Nº|N|NO)\s*[:\.]?\s*0*(\d{4,6})", texto, re.IGNORECASE)
     match_oc = re.search(r"OC\s*[:\.]?\s*0*(\d{4,6})", texto, re.IGNORECASE)
     dados['is_midia'] = bool(match_ap)
-    dados['ap_oc'] = match_ap.group(1) if match_ap else (match_oc.group(1) if match_oc else "N/A")
+    dados['ap_oc'] = match_ap.group(1) if match_ap else (match_oc.group(1) if match_oc else "")
     
     # 3. CNPJ FORNECEDOR
-    cnpjs_encontrados = re.findall(r"\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}", texto)
     cnpjs_ignorados = ["03.612.122/0001-27", "03.648.344/0001-08", "14.470.051/0001-91"]
-    fornecedor_cnpj = next((c for c in cnpjs_encontrados if c not in cnpjs_ignorados), "")
-    dados['fornecedor_cnpj'] = fornecedor_cnpj
+    cnpjs_encontrados = re.findall(r"\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}", texto)
+    dados['fornecedor_cnpj'] = next((c for c in cnpjs_encontrados if c not in cnpjs_ignorados), "")
     
-    # 4. FORNECEDOR
+    # 4. FORNECEDOR NOME
     fornecedor_nome = ""
-    if fornecedor_cnpj:
-        linhas = [l.strip() for l in texto_upper.split('\n') if l.strip()]
+    linhas = [l.strip() for l in texto.split('\n') if l.strip()]
+    if dados['fornecedor_cnpj']:
         for i, linha in enumerate(linhas):
-            if fornecedor_cnpj in linha and i > 0:
+            if dados['fornecedor_cnpj'] in linha and i > 0:
                 fornecedor_nome = linhas[i-1]
-                if "FONE" in fornecedor_nome or "FAX" in fornecedor_nome:
+                if "FONE" in fornecedor_nome.upper() or "FAX" in fornecedor_nome.upper():
                     fornecedor_nome = linhas[i-2] if i > 1 else fornecedor_nome
-                fornecedor_nome = re.sub(r"^(FORNECEDOR|VE[IÍ]CULO|RAZ[ÃA]O SOCIAL|EMPRESA)\s*[:\-]?\s*", "", fornecedor_nome)
-                fornecedor_nome = re.split(r"\||\+|=|_|\d{1,3}DFM|\d{1,3}\s*DIAS", fornecedor_nome)[0].strip()
+                fornecedor_nome = re.sub(r"^(FORNECEDOR|VE[IÍ]CULO|RAZ[ÃA]O SOCIAL|EMPRESA)\s*[:\-]?\s*", "", fornecedor_nome, flags=re.IGNORECASE)
+                fornecedor_nome = re.split(r"\||\+|=|_", fornecedor_nome)[0].strip()
                 break
-
-    if len(fornecedor_nome) < 3:
-        match_fornecedor = re.search(r"(?:FORNECEDOR|VE[IÍ]CULO|RAZ[ÃA]O SOCIAL|EMPRESA)\s*[:\-]?\s*([^\n\r]+)", texto_upper)
-        if match_fornecedor:
-            fornecedor_nome = re.split(r"(MEIO|FORMATO|PER[ÍI]ODO|CAMPANHA|VALOR|DATA|VE[IÍ]CULO|CNPJ|CLIENTE)", match_fornecedor.group(1))[0].strip()
-            fornecedor_nome = re.split(r"\||\+|=|_", fornecedor_nome)[0].strip()
-
-    dados['fornecedor'] = fornecedor_nome if fornecedor_nome else "FORNECEDOR NÃO IDENTIFICADO"
+    dados['fornecedor'] = fornecedor_nome.upper() if fornecedor_nome else ""
 
     # 5. CAMPANHA E TÍTULO
-    match_camp = re.search(r"CAMPANHA\s*[:\.]?\s*(.*?)(?:PROJETO|PRODUTO|ESP[EÉ]CIE|T[IÍ]TULO|MEIO|FORMATO|CNPJ|\n|$)", texto_upper)
-    dados['campanha'] = match_camp.group(1).strip() if match_camp and len(match_camp.group(1).strip()) > 2 else "MÍDIAS INSTITUCIONAIS"
-
-    match_tit = re.search(r"T[IÍ]TULO\s*[:\.]?\s*(.*?)(?:ACABAMENTO|VALIDADE|CORES|PZ\.ENTREGA|\n|$)", texto_upper)
-    dados['titulo'] = match_tit.group(1).strip() if match_tit and len(match_tit.group(1).strip()) > 2 else "N/A"
-        
-    # MÊS
-    match_mes = re.search(r"(?:M[ÊE]S|PER[ÍI]ODO|DATA)\s*[:\-]?\s*([^\n\r]+)", texto_upper)
-    if match_mes:
-        mes = re.split(r"\s{2,}|\n|PROJETO|PRODUTO", match_mes.group(1))[0].strip()
-        dados['mes_ano'] = re.sub(r"^(M[ÊE]S DE\s*|M[ÊE]S\s*)", "", mes)
-    else:
-        dados['mes_ano'] = "Agosto/2026"
-
-    # 6. MÍDIA (PEÇA)
-    match_peca = re.search(r"(?:PE[ÇC]A|SERVI[ÇC]O)\s*[:\-]?\s*([^\n\r]+)", texto_upper)
-    peca_header = re.split(r"\s{2,}|\n|FORMATO", match_peca.group(1))[0].strip() if match_peca else "Serviço de Publicidade"
+    match_camp = re.search(r"CAMPANHA\s*[:\-]?\s*([^\n\r\|]+)", texto_upper)
+    dados['campanha'] = match_camp.group(1).strip() if match_camp else ""
     
-    match_aut = re.search(r"REFERENTE\s*[AÀ]\s*([^\n\r]+)", texto_upper)
-    if match_aut:
-        texto_peca = match_aut.group(1).strip()
-    else:
+    match_tit = re.search(r"T[ÍI]TULO\s*[:\-]?\s*([^\n\r\|]+)", texto_upper)
+    dados['titulo'] = match_tit.group(1).strip() if match_tit else "N/A"
+    
+    # 6. MÊS
+    match_mes = re.search(r"(?:M[ÊE]S|PER[ÍI]ODO|DATA)\s*[:\-]?\s*([^\n\r\|]+)", texto_upper)
+    mes = match_mes.group(1).strip() if match_mes else ""
+    dados['mes_ano'] = re.sub(r"^(M[ÊE]S DE\s*|M[ÊE]S\s*)", "", mes, flags=re.IGNORECASE)
+    
+    # 7. PEÇA / SERVIÇOS (Busca flexível)
+    if dados['is_midia']:
+        match_aut = re.search(r"REFERENTE\s*[AÀ]\s*([^\n\r]+)", texto_upper)
         match_veic = re.search(r"(VEICULA[ÇC][ÃA]O DE\s*[^\n\r]+)", texto_upper)
-        texto_peca = match_veic.group(1).strip() if match_veic else peca_header
+        match_peca = re.search(r"(?:PE[ÇC]A|SERVI[ÇC]O)\s*[:\-]?\s*([^\n\r\|]+)", texto_upper)
+        
+        texto_peca = match_aut.group(1).strip() if match_aut else (match_veic.group(1).strip() if match_veic else (match_peca.group(1).strip() if match_peca else ""))
+        
+        match_vol = re.search(r"VOLUME:\s*([^\n\r]+)", texto_upper)
+        if match_vol and texto_peca:
+            texto_peca += f" - {match_vol.group(1).strip()}"
             
-    match_vol = re.search(r"VOLUME:\s*([^\n\r]+)", texto_upper)
-    if match_vol and texto_peca != peca_header:
-        texto_peca += f" - {match_vol.group(1).strip()}"
-    dados['peca'] = texto_peca if len(texto_peca) > 2 else "Serviço de Publicidade"
-
-    # 7. PRODUÇÃO (SERVIÇOS)
-    match_serv = re.search(r"OP[ÇC][ÃA]O.*?\n\s*(?:1|01)\s+([A-Z].*?)(?:\d{1,3}\s*DFM|R\$|\d{2,}\.|CNPJ|\n|$)", texto_upper, re.DOTALL)
-    if match_serv:
-        dados['servicos'] = match_serv.group(1).strip()
+        dados['peca'] = texto_peca
     else:
-        dados['servicos'] = "Serviços de Produção"
-    
+        match_serv = re.search(r"(?:OP[ÇC][ÃA]O|DESCRI[ÇC][ÃA]O.*?FORNECEDOR)[\s\S]{1,200}?(?:^|\n)\s*(?:1|01)\s+([^\n\r]+)", texto_upper)
+        dados['peca'] = re.split(r"\s{2,}|\d{1,3}\s*DFM|CNPJ|R\$", match_serv.group(1))[0].strip() if match_serv else ""
+
     return dados
 
-if st.button("🚀 Gerar Atestado Oficial", type="primary"):
-    if not uploaded_file or not pi_pp_input:
-        st.error("Por favor, envie o arquivo PDF e digite o número do PI/PP.")
-    else:
-        with st.spinner("Lendo documento escaneado..."):
-            pdf_bytes = uploaded_file.read()
-            dados = extrair_dados_pdf_escaneado(pdf_bytes)
+if uploaded_file:
+    with st.spinner("Lendo documento escaneado..."):
+        dados = extrair_dados_pdf_escaneado(uploaded_file.read())
         
-        meses = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
-        data_hoje = f"{datetime.now().day} de {meses[datetime.now().month - 1]} de {datetime.now().year}"
+    st.subheader("2. Revise os dados e complete o PI/PP")
+    st.info("💡 Como o documento é escaneado, revise se o robô leu os campos corretamente. Corrija o que precisar abaixo:")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        doc_type = st.radio("Tipo de Serviço:", ["Mídia (AP)", "Produção (OC)"], index=0 if dados['is_midia'] else 1)
+        pi_pp_val = st.text_input("Nº da PI / PP (Obrigatório):", placeholder="Ex: 37710")
+        ap_oc_val = st.text_input("Nº da AP / OC:", value=dados['ap_oc'])
         
-        # MUDANÇA AQUI: orientation='L' para Landscape (Paisagem)
-        pdf = FPDF(orientation='L')
-        pdf.set_auto_page_break(auto=True, margin=10)
-        pdf.add_page()
-        pdf.set_margins(15, 15, 15)
+    with col2:
+        fornecedor_val = st.text_input("Fornecedor / Veículo:", value=dados['fornecedor'])
+        cnpj_val = st.text_input("CNPJ do Fornecedor:", value=dados['fornecedor_cnpj'])
+        mes_ano_val = st.text_input("Mês / Período:", value=dados['mes_ano'])
         
-        pdf.set_font("Helvetica", "B", 12)
-        titulo_doc = f"ATESTADO DE VEICULAÇÃO DE MÍDIA | {dados['tag_cliente']}" if dados['is_midia'] else f"ATESTADO DE PRODUÇÃO - {dados['tag_cliente']}"
-        pdf.cell(130, 10, limpar_texto(titulo_doc), ln=0)
+    with col3:
+        campanha_val = st.text_input("Campanha:", value=dados['campanha'])
+        peca_servico_val = st.text_input("Peça / Serviços (Pode colar textos longos aqui):", value=dados['peca'])
+        titulo_val = st.text_input("Título (Apenas Produção):", value=dados['titulo'] if doc_type == "Produção (OC)" else "N/A", disabled=doc_type == "Mídia (AP)")
         
-        logo_path = "logo ebmquintto preta BG transparente.png"
-        if os.path.exists(logo_path):
-            # Movemos o logo mais para a direita (235) para acompanhar a folha paisagem
-            pdf.image(logo_path, x=235, y=12, w=45)
+    if st.button("🚀 Gerar Atestado Oficial", type="primary"):
+        if not pi_pp_val:
+            st.error("Por favor, preencha o número do PI/PP.")
         else:
-            pdf.set_font("Helvetica", "B", 16)
-            pdf.cell(137, 10, "EBM QUINTTO.", ln=0, align="R")
+            meses = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
+            data_hoje = f"{datetime.now().day} de {meses[datetime.now().month - 1]} de {datetime.now().year}"
             
-        pdf.ln(12)
-        pdf.set_draw_color(255, 204, 0)
-        pdf.set_line_width(1.5)
-        # Linha esticada até 282 (largura total da margem)
-        pdf.line(15, pdf.get_y(), 282, pdf.get_y())
-        pdf.ln(8)
-        
-        fornecedor_formatado = f"{dados['fornecedor']}"
-        if dados['fornecedor_cnpj']:
-            fornecedor_formatado += f", CNPJ: {dados['fornecedor_cnpj']}"
+            pdf = FPDF(orientation='L')
+            pdf.set_auto_page_break(auto=True, margin=10)
+            pdf.add_page()
+            pdf.set_margins(15, 15, 15)
+            
+            pdf.set_font("Helvetica", "B", 12)
+            is_midia_selecionado = (doc_type == "Mídia (AP)")
+            titulo_doc = f"ATESTADO DE VEICULAÇÃO DE MÍDIA | {dados['tag_cliente']}" if is_midia_selecionado else f"ATESTADO DE PRODUÇÃO - {dados['tag_cliente']}"
+            pdf.cell(130, 10, limpar_texto(titulo_doc), ln=0)
+            
+            logo_path = "logo ebmquintto preta BG transparente.png"
+            if os.path.exists(logo_path):
+                pdf.image(logo_path, x=235, y=12, w=45)
+            else:
+                pdf.set_font("Helvetica", "B", 16)
+                pdf.cell(137, 10, "EBM QUINTTO.", ln=0, align="R")
+                
+            pdf.ln(12)
+            pdf.set_draw_color(255, 204, 0)
+            pdf.set_line_width(1.5)
+            pdf.line(15, pdf.get_y(), 282, pdf.get_y())
+            pdf.ln(8)
+            
+            fornecedor_formatado = f"{fornecedor_val}"
+            if cnpj_val:
+                fornecedor_formatado += f", CNPJ: {cnpj_val}"
 
-        pdf.set_font("Helvetica", "", 10)
-        if dados['is_midia']:
-            texto = f"Atestamos para fins de comprovação de execução de serviço prestados que no mês de {dados['mes_ano']}, o veículo {fornecedor_formatado} a veiculações de mídias publicitárias do cliente {dados['cliente_nome']}, CNPJ {dados['cliente_cnpj']} intermediadas por essa agência de publicidade no período de acordo com as planilhas de AP e PI relacionadas abaixo."
-        else:
-            texto = f"Atestamos para fins de comprovação de execução de serviço prestados, que o fornecedor {fornecedor_formatado} produziu material publicitário para o {dados['cliente_nome']}, CNPJ {dados['cliente_cnpj']} intermediadas por essa agência de publicidade no período de acordo com as OC e PP relacionadas abaixo."
+            pdf.set_font("Helvetica", "", 10)
+            if is_midia_selecionado:
+                texto = f"Atestamos para fins de comprovação de execução de serviço prestados que no mês de {mes_ano_val}, o veículo {fornecedor_formatado} a veiculações de mídias publicitárias do cliente {dados['cliente_nome']}, CNPJ {dados['cliente_cnpj']} intermediadas por essa agência de publicidade no período de acordo com as planilhas de AP e PI relacionadas abaixo."
+            else:
+                texto = f"Atestamos para fins de comprovação de execução de serviço prestados, que o fornecedor {fornecedor_formatado} produziu material publicitário para o {dados['cliente_nome']}, CNPJ {dados['cliente_cnpj']} intermediadas por essa agência de publicidade no período de acordo com as OC e PP relacionadas abaixo."
+                
+            pdf.multi_cell(0, 6, limpar_texto(texto))
+            pdf.ln(8)
             
-        pdf.multi_cell(0, 6, limpar_texto(texto))
-        pdf.ln(8)
-        
-        pdf.set_draw_color(255, 204, 0)
-        pdf.set_line_width(1.0)
-        pdf.set_fill_color(0, 0, 0)
-        pdf.set_text_color(255, 255, 255)
-        pdf.set_font("Helvetica", "B", 8)
-        
-        if dados['is_midia']:
-            # Larguras ajustadas para preencher os 267mm da página em Paisagem
-            pdf.cell(15, 9, "#", border=1, fill=True, align="C")
-            pdf.cell(40, 9, "Planilha AP n°", border=1, fill=True, align="C")
-            pdf.cell(40, 9, "PI n°", border=1, fill=True, align="C")
-            pdf.cell(100, 9, "PEÇA", border=1, fill=True, align="C")
-            pdf.cell(72, 9, "CAMPANHA", border=1, fill=True, align="C")
-            pdf.ln()
+            pdf.set_draw_color(255, 204, 0)
+            pdf.set_line_width(1.0)
+            pdf.set_fill_color(0, 0, 0)
+            pdf.set_text_color(255, 255, 255)
+            pdf.set_font("Helvetica", "B", 8)
             
-            pdf.set_fill_color(255, 255, 255)
-            pdf.set_text_color(0, 0, 0)
-            pdf.set_font("Helvetica", "", 7.5) 
-            pdf.cell(15, 10, "1", border=1, align="C")
-            pdf.cell(40, 10, limitar_tamanho(dados['ap_oc'], 20), border=1, align="C")
-            pdf.cell(40, 10, limitar_tamanho(pi_pp_input, 15), border=1, align="C")
-            pdf.cell(100, 10, limitar_tamanho(dados['peca'], 90), border=1, align="C")
-            pdf.cell(72, 10, limitar_tamanho(dados['campanha'], 50), border=1, align="C")
+            if is_midia_selecionado:
+                pdf.cell(15, 9, "#", border=1, fill=True, align="C")
+                pdf.cell(40, 9, "Planilha AP n°", border=1, fill=True, align="C")
+                pdf.cell(40, 9, "PI n°", border=1, fill=True, align="C")
+                pdf.cell(100, 9, "PEÇA", border=1, fill=True, align="C")
+                pdf.cell(72, 9, "CAMPANHA", border=1, fill=True, align="C")
+                pdf.ln()
+                
+                pdf.set_fill_color(255, 255, 255)
+                pdf.set_text_color(0, 0, 0)
+                pdf.set_font("Helvetica", "", 7.5) 
+                pdf.cell(15, 10, "1", border=1, align="C")
+                pdf.cell(40, 10, limitar_tamanho(ap_oc_val, 20), border=1, align="C")
+                pdf.cell(40, 10, limitar_tamanho(pi_pp_val, 15), border=1, align="C")
+                pdf.cell(100, 10, limitar_tamanho(peca_servico_val, 90), border=1, align="C")
+                pdf.cell(72, 10, limitar_tamanho(campanha_val, 50), border=1, align="C")
+                
+            else:
+                pdf.cell(15, 9, "#", border=1, fill=True, align="C")
+                pdf.cell(30, 9, "PP n°", border=1, fill=True, align="C")
+                pdf.cell(30, 9, "OC n°", border=1, fill=True, align="C")
+                pdf.cell(72, 9, "SERVIÇOS", border=1, fill=True, align="C")
+                pdf.cell(60, 9, "TÍTULO", border=1, fill=True, align="C")
+                pdf.cell(60, 9, "CAMPANHA", border=1, fill=True, align="C")
+                pdf.ln()
+                
+                pdf.set_fill_color(255, 255, 255)
+                pdf.set_text_color(0, 0, 0)
+                pdf.set_font("Helvetica", "", 7.5)
+                pdf.cell(15, 10, "1", border=1, align="C")
+                pdf.cell(30, 10, limitar_tamanho(pi_pp_val, 15), border=1, align="C")
+                pdf.cell(30, 10, limitar_tamanho(ap_oc_val, 15), border=1, align="C")
+                pdf.cell(72, 10, limitar_tamanho(peca_servico_val, 65), border=1, align="C")
+                pdf.cell(60, 10, limitar_tamanho(titulo_val, 50), border=1, align="C")
+                pdf.cell(60, 10, limitar_tamanho(campanha_val, 50), border=1, align="C")
+                
+            pdf.ln(10)
             
-        else:
-            # Larguras ajustadas para Produção em Paisagem
-            pdf.cell(15, 9, "#", border=1, fill=True, align="C")
-            pdf.cell(30, 9, "PP n°", border=1, fill=True, align="C")
-            pdf.cell(30, 9, "OC n°", border=1, fill=True, align="C")
-            pdf.cell(72, 9, "SERVIÇOS", border=1, fill=True, align="C")
-            pdf.cell(60, 9, "TÍTULO", border=1, fill=True, align="C")
-            pdf.cell(60, 9, "CAMPANHA", border=1, fill=True, align="C")
-            pdf.ln()
+            pdf.set_font("Helvetica", "", 10)
+            pdf.cell(0, 6, limpar_texto(f"Fortaleza/CE, {data_hoje}."), ln=1)
+            pdf.ln(5)
             
-            pdf.set_fill_color(255, 255, 255)
-            pdf.set_text_color(0, 0, 0)
-            pdf.set_font("Helvetica", "", 7.5)
-            pdf.cell(15, 10, "1", border=1, align="C")
-            pdf.cell(30, 10, limitar_tamanho(pi_pp_input, 15), border=1, align="C")
-            pdf.cell(30, 10, limitar_tamanho(dados['ap_oc'], 15), border=1, align="C")
-            pdf.cell(72, 10, limitar_tamanho(dados['servicos'], 65), border=1, align="C")
-            pdf.cell(60, 10, limitar_tamanho(dados['titulo'], 50), border=1, align="C")
-            pdf.cell(60, 10, limitar_tamanho(dados['campanha'], 50), border=1, align="C")
+            if os.path.exists("luma_signature_perfect.png"):
+                pdf.image("luma_signature_perfect.png", x=15, w=60)
             
-        pdf.ln(10)
-        
-        pdf.set_font("Helvetica", "", 10)
-        pdf.cell(0, 6, limpar_texto(f"Fortaleza/CE, {data_hoje}."), ln=1)
-        pdf.ln(5)
-        
-        if os.path.exists("luma_signature_perfect.png"):
-            pdf.image("luma_signature_perfect.png", x=15, w=60)
-        
-        pdf.set_y(-30)
-        pdf.set_font("Helvetica", "", 7)
-        pdf.set_text_color(100, 100, 100)
-        
-        # Colunas do rodapé esticadas para a largura total
-        pdf.cell(89, 3, "Fortaleza-CE", ln=0, align="C")
-        pdf.cell(89, 3, "Brasília-DF- Setor Comercial Norte,", ln=0, align="C")
-        pdf.cell(89, 3, "Bahia-BA Al. Salvador, 1057, Sl. 1411,", ln=1, align="C")
-        
-        pdf.cell(89, 3, "R. Beni Carvalho, 138 CEP: 60135-400", ln=0, align="C")
-        pdf.cell(89, 3, "01 Bloco D, Conj 119 Vega Luxury Mall", ln=0, align="C")
-        pdf.cell(89, 3, "Torre Europa Caminho das Arvores", ln=1, align="C")
-        
-        pdf.cell(89, 3, "+55 85 3253.5555", ln=0, align="C")
-        pdf.cell(89, 3, "CEP: 70711-948 - 55 61 3525-7988", ln=0, align="C")
-        pdf.cell(89, 3, "CEP: 41820-790 +55 71 3825-3178", ln=1, align="C")
-        
-        pdf.ln(2)
-        pdf.set_font("Helvetica", "B", 7)
-        pdf.cell(0, 3, "@ebmquintto       ebmquintto.com.br", align="C")
-        
-        pdf_bytes = pdf.output()
-        
-        st.success("✅ Atestado gerado com sucesso!")
-        st.download_button(
-            label="📥 Baixar Atestado PDF",
-            data=bytes(pdf_bytes),
-            file_name=limpar_texto(f"ATESTADO_{dados['tag_cliente']}_{dados['ap_oc']}.pdf"),
-            mime="application/pdf"
-        )
+            pdf.set_y(-30)
+            pdf.set_font("Helvetica", "", 7)
+            pdf.set_text_color(100, 100, 100)
+            
+            pdf.cell(89, 3, "Fortaleza-CE", ln=0, align="C")
+            pdf.cell(89, 3, "Brasília-DF- Setor Comercial Norte,", ln=0, align="C")
+            pdf.cell(89, 3, "Bahia-BA Al. Salvador, 1057, Sl. 1411,", ln=1, align="C")
+            
+            pdf.cell(89, 3, "R. Beni Carvalho, 138 CEP: 60135-400", ln=0, align="C")
+            pdf.cell(89, 3, "01 Bloco D, Conj 119 Vega Luxury Mall", ln=0, align="C")
+            pdf.cell(89, 3, "Torre Europa Caminho das Arvores", ln=1, align="C")
+            
+            pdf.cell(89, 3, "+55 85 3253.5555", ln=0, align="C")
+            pdf.cell(89, 3, "CEP: 70711-948 - 55 61 3525-7988", ln=0, align="C")
+            pdf.cell(89, 3, "CEP: 41820-790 +55 71 3825-3178", ln=1, align="C")
+            
+            pdf.ln(2)
+            pdf.set_font("Helvetica", "B", 7)
+            pdf.cell(0, 3, "@ebmquintto       ebmquintto.com.br", align="C")
+            
+            pdf_bytes = pdf.output()
+            
+            st.success("✅ Atestado gerado com sucesso!")
+            st.download_button(
+                label="📥 Baixar Atestado PDF",
+                data=bytes(pdf_bytes),
+                file_name=limpar_texto(f"ATESTADO_{dados['tag_cliente']}_{ap_oc_val}.pdf"),
+                mime="application/pdf"
+            )
