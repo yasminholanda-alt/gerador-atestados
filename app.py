@@ -5,20 +5,24 @@ import os
 from datetime import datetime
 from fpdf import FPDF
 
-st.set_page_config(page_title="Gerador de Atestados - EBM QUINTTO", page_icon="📄", layout="wide")
+# Configuração da Página
+st.set_page_config(page_title="Gerador de Atestados - EBM QUINTTO", page_icon="📄", layout="centered")
 
-st.title("📄 Gerador de Atestados SESC / SENAC")
+st.title("📄 Gerador Automático de Atestados")
 st.write("Agência EBM QUINTTO Comunicação")
 
-uploaded_file = st.file_uploader("Envie a AP ou OC em PDF", type=["pdf"])
+# Apenas 2 campos na tela: O Arquivo e o Número do PI/PP
+uploaded_file = st.file_uploader("1. Envie a AP ou OC em PDF", type=["pdf"])
+pi_pp_input = st.text_input("2. Digite o Número do PI ou PP:", placeholder="Ex: 37710")
 
+# Função que lê o PDF e descobre tudo sozinho
 def extrair_dados_pdf(pdf_file):
     reader = pypdf.PdfReader(pdf_file)
     texto = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
     
     dados = {}
     
-    # Identifica Cliente
+    # 1. Identifica Cliente
     if "03.612.122/0001-27" in texto or "SESC" in texto.upper():
         dados['cliente_nome'] = "SERVIÇO SOCIAL DO COMERCIO SESC AR/CE"
         dados['cliente_cnpj'] = "03.612.122/0001-27"
@@ -28,83 +32,73 @@ def extrair_dados_pdf(pdf_file):
         dados['cliente_cnpj'] = "03.648.344/0001-08"
         dados['tag_cliente'] = "SENAC"
         
-    # Extrai números
+    # 2. Identifica se é Mídia (AP) ou Produção (OC)
     match_ap = re.search(r"(?:PLANILHA|AP|Nº)\s*[:\.]?\s*0*(\d{4,6})", texto, re.IGNORECASE)
     match_oc = re.search(r"OC\s*[:\.]?\s*0*(\d{4,6})", texto, re.IGNORECASE)
-    dados['ap_oc'] = match_ap.group(1) if match_ap else (match_oc.group(1) if match_oc else "")
+    dados['is_midia'] = bool(match_ap)
+    dados['ap_oc'] = match_ap.group(1) if match_ap else (match_oc.group(1) if match_oc else "N/A")
     
-    match_pi = re.search(r"(?:PI|PEDIDO|PP)\s*[:\.]?\s*0*(\d{4,6})", texto, re.IGNORECASE)
-    dados['pi_pp'] = match_pi.group(1) if match_pi else ""
-    
+    # 3. Busca Campanha
     match_campanha = re.search(r"CAMPANHA:\s*([^\n\r]+)", texto, re.IGNORECASE)
-    dados['campanha'] = match_campanha.group(1).strip() if match_campanha else ""
+    dados['campanha'] = match_campanha.group(1).strip() if match_campanha else "MÍDIAS INSTITUCIONAIS"
     
-    # Define o tipo com base no que foi encontrado
-    dados['tipo'] = "Mídia (AP)" if match_ap else "Produção (OC)"
+    # 4. Busca Fornecedor / Veículo
+    match_fornecedor = re.search(r"(?:FORNECEDOR|VE[IÍ]CULO|RAZ[ÃA]O SOCIAL|EMPRESA)\s*[:\-]?\s*([^\n\r]+)", texto, re.IGNORECASE)
+    dados['fornecedor'] = match_fornecedor.group(1).strip().upper() if match_fornecedor else "FORNECEDOR NÃO IDENTIFICADO"
+    
+    # 5. Busca Peça / Título / Serviço
+    match_peca = re.search(r"(?:PE[ÇC]A|SERVI[ÇC]O|T[ÍI]TULO)\s*[:\-]?\s*([^\n\r]+)", texto, re.IGNORECASE)
+    dados['peca'] = match_peca.group(1).strip() if match_peca else "Serviço de Publicidade"
+    
+    # 6. Busca Mês / Período
+    match_mes = re.search(r"(?:M[ÊE]S|PER[ÍI]ODO|DATA)\s*[:\-]?\s*([^\n\r]+)", texto, re.IGNORECASE)
+    dados['mes_ano'] = match_mes.group(1).strip() if match_mes else "Agosto de 2026"
     
     return dados
 
-if uploaded_file:
-    dados_extraidos = extrair_dados_pdf(uploaded_file)
-    
-    st.subheader("Revisão de Dados")
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        doc_type = st.radio("Tipo de Serviço:", ["Mídia (AP)", "Produção (OC)"], index=0 if dados_extraidos['tipo'] == "Mídia (AP)" else 1)
-        ap_oc_val = st.text_input("Nº da AP / OC:", value=dados_extraidos['ap_oc'])
-        pi_pp_val = st.text_input("Nº da PI / PP:", value=dados_extraidos['pi_pp'])
+# Botão para gerar direto
+if st.button("🚀 Gerar Atestado", type="primary"):
+    if not uploaded_file or not pi_pp_input:
+        st.error("Por favor, envie o arquivo PDF e digite o número do PI/PP.")
+    else:
+        # Extrai tudo automaticamente
+        dados = extrair_dados_pdf(uploaded_file)
         
-    with col2:
-        fornecedor_val = st.text_input("Razão Social do Fornecedor/Veículo:", placeholder="Ex: TV VERDES MARES LTDA")
-        mes_ano_val = st.text_input("Mês e Ano (Apenas p/ Mídia):", placeholder="Ex: Agosto de 2026")
-        campanha_val = st.text_input("Campanha:", value=dados_extraidos['campanha'])
-        
-    with col3:
-        if doc_type == "Produção (OC)":
-            servicos_val = st.text_input("Serviços:", value="Produção de Vídeo")
-            titulo_val = st.text_input("Título:", value="Institucional")
-        else:
-            peca_val = st.text_input("Peça / Formato:", value="Serviço de Publicidade / Mídia")
-            
+        # Pega a data de hoje para a assinatura
         meses = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
         data_hoje = f"{datetime.now().day} de {meses[datetime.now().month - 1]} de {datetime.now().year}"
-        data_emissao = st.text_input("Data de Emissão:", value=data_hoje)
-
-    if st.button("🚀 Gerar Atestado Oficial", type="primary"):
-        is_midia = (doc_type == "Mídia (AP)")
         
+        # Inicia o PDF
         pdf = FPDF()
         pdf.add_page()
         pdf.set_margins(15, 15, 15)
         
         # Cabeçalho
         pdf.set_font("Helvetica", "B", 12)
-        titulo_doc = f"ATESTADO DE VEICULAÇÃO DE MÍDIA | {dados_extraidos['tag_cliente']}" if is_midia else f"ATESTADO DE PRODUÇÃO – {dados_extraidos['tag_cliente']}"
+        titulo_doc = f"ATESTADO DE VEICULAÇÃO DE MÍDIA | {dados['tag_cliente']}" if dados['is_midia'] else f"ATESTADO DE PRODUÇÃO – {dados['tag_cliente']}"
         pdf.cell(130, 10, titulo_doc, ln=0)
         
         pdf.set_font("Helvetica", "B", 16)
         pdf.cell(50, 5, "EBM", ln=1, align="R")
         pdf.cell(180, 5, "QUINTTO.", ln=1, align="R")
-        
         pdf.ln(8)
         
         # Texto Principal exato dos modelos
         pdf.set_font("Helvetica", "", 10)
-        if is_midia:
-            texto = f"Atestamos para fins de comprovação de execução de serviço prestados que no {mes_ano_val}, o veículo {fornecedor_val} a veiculações de mídias publicitárias do cliente {dados_extraidos['cliente_nome']}, CNPJ {dados_extraidos['cliente_cnpj']} intermediadas por essa agência de publicidade no período de acordo com as planilhas de AP e PI relacionadas abaixo."
+        if dados['is_midia']:
+            texto = f"Atestamos para fins de comprovação de execução de serviço prestados que no {dados['mes_ano']}, o veículo {dados['fornecedor']} a veiculações de mídias publicitárias do cliente {dados['cliente_nome']}, CNPJ {dados['cliente_cnpj']} intermediadas por essa agência de publicidade no período de acordo com as planilhas de AP e PI relacionadas abaixo."
         else:
-            texto = f"Atestamos para fins de comprovação de execução de serviço prestados, que o fornecedor {fornecedor_val} produziu material publicitário para o {dados_extraidos['cliente_nome']}, CNPJ {dados_extraidos['cliente_cnpj']} intermediadas por essa agência de publicidade no período de acordo com as OC e PP relacionadas abaixo."
+            texto = f"Atestamos para fins de comprovação de execução de serviço prestados, que o fornecedor {dados['fornecedor']} produziu material publicitário para o {dados['cliente_nome']}, CNPJ {dados['cliente_cnpj']} intermediadas por essa agência de publicidade no período de acordo com as OC e PP relacionadas abaixo."
             
         pdf.multi_cell(0, 6, texto)
         pdf.ln(8)
         
-        # Tabela
+        # Desenha a Tabela
         pdf.set_fill_color(0, 0, 0)
         pdf.set_text_color(255, 255, 255)
         pdf.set_font("Helvetica", "B", 8)
         
-        if is_midia:
+        if dados['is_midia']:
             pdf.cell(10, 9, "#", border=1, fill=True, align="C")
             pdf.cell(35, 9, "Planilha AP n°", border=1, fill=True, align="C")
             pdf.cell(30, 9, "PI n°", border=1, fill=True, align="C")
@@ -116,10 +110,10 @@ if uploaded_file:
             pdf.set_text_color(0, 0, 0)
             pdf.set_font("Helvetica", "", 8)
             pdf.cell(10, 10, "1", border=1, align="C")
-            pdf.cell(35, 10, str(ap_oc_val), border=1, align="C")
-            pdf.cell(30, 10, str(pi_pp_val), border=1, align="C")
-            pdf.cell(60, 10, str(peca_val), border=1, align="C")
-            pdf.cell(45, 10, str(campanha_val), border=1, align="C")
+            pdf.cell(35, 10, str(dados['ap_oc']), border=1, align="C")
+            pdf.cell(30, 10, str(pi_pp_input), border=1, align="C")
+            pdf.cell(60, 10, str(dados['peca']), border=1, align="C")
+            pdf.cell(45, 10, str(dados['campanha']), border=1, align="C")
             
         else:
             pdf.cell(10, 9, "#", border=1, fill=True, align="C")
@@ -134,17 +128,17 @@ if uploaded_file:
             pdf.set_text_color(0, 0, 0)
             pdf.set_font("Helvetica", "", 8)
             pdf.cell(10, 10, "1", border=1, align="C")
-            pdf.cell(25, 10, str(pi_pp_val), border=1, align="C")
-            pdf.cell(25, 10, str(ap_oc_val), border=1, align="C")
-            pdf.cell(45, 10, str(servicos_val), border=1, align="C")
-            pdf.cell(35, 10, str(titulo_val), border=1, align="C")
-            pdf.cell(40, 10, str(campanha_val), border=1, align="C")
+            pdf.cell(25, 10, str(pi_pp_input), border=1, align="C")
+            pdf.cell(25, 10, str(dados['ap_oc']), border=1, align="C")
+            pdf.cell(45, 10, str(dados['peca']), border=1, align="C")
+            pdf.cell(35, 10, str(dados['peca']), border=1, align="C")
+            pdf.cell(40, 10, str(dados['campanha']), border=1, align="C")
             
         pdf.ln(15)
         
         # Data e Assinatura
         pdf.set_font("Helvetica", "", 10)
-        pdf.cell(0, 6, f"Fortaleza/CE, {data_emissao}.", ln=1)
+        pdf.cell(0, 6, f"Fortaleza/CE, {data_hoje}.", ln=1)
         pdf.ln(8)
         
         if os.path.exists("luma_signature_perfect.png"):
@@ -185,10 +179,10 @@ if uploaded_file:
         
         pdf_bytes = pdf.output()
         
-        st.success("✅ Atestado gerado no padrão oficial!")
+        st.success("✅ Atestado gerado com sucesso!")
         st.download_button(
-            label="📥 Baixar Atestado Oficial",
+            label="📥 Baixar Atestado PDF",
             data=bytes(pdf_bytes),
-            file_name=f"ATESTADO_{dados_extraidos['tag_cliente']}_{ap_oc_val}.pdf",
+            file_name=f"ATESTADO_{dados['tag_cliente']}_{dados['ap_oc']}.pdf",
             mime="application/pdf"
         )
