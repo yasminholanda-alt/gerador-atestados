@@ -1,29 +1,35 @@
 import streamlit as st
-import pypdf
 import re
 import os
 from datetime import datetime
 from fpdf import FPDF
+import pytesseract
+from pdf2image import convert_from_bytes
 
 # Configuração da Página
 st.set_page_config(page_title="Gerador de Atestados - EBM QUINTTO", page_icon="📄", layout="centered")
 
 st.title("📄 Gerador Automático de Atestados")
-st.write("Agência EBM QUINTTO Comunicação")
+st.write("Agência EBM QUINTTO Comunicação (Lê PDFs Escaneados)")
 
 uploaded_file = st.file_uploader("1. Envie a AP ou OC em PDF", type=["pdf"])
 pi_pp_input = st.text_input("2. Digite o Número do PI ou PP:", placeholder="Ex: 37710")
 
-# Função para limpar caracteres que o PDF não aceita
 def limpar_texto(texto):
     if not texto: return ""
     texto = str(texto).replace("–", "-").replace("—", "-").replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'")
     return texto.encode('latin-1', 'replace').decode('latin-1')
 
-def extrair_dados_pdf(pdf_file):
-    reader = pypdf.PdfReader(pdf_file)
-    texto = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
+@st.cache_data
+def extrair_dados_pdf_escaneado(pdf_bytes):
+    # 1. Converte o PDF em Imagens
+    imagens = convert_from_bytes(pdf_bytes)
     
+    # 2. Lê o texto da imagem usando o Tesseract em Português
+    texto = ""
+    for img in imagens:
+        texto += pytesseract.image_to_string(img, lang='por') + "\n"
+        
     dados = {}
     
     if "03.612.122/0001-27" in texto or "SESC" in texto.upper():
@@ -35,7 +41,7 @@ def extrair_dados_pdf(pdf_file):
         dados['cliente_cnpj'] = "03.648.344/0001-08"
         dados['tag_cliente'] = "SENAC"
         
-    match_ap = re.search(r"(?:PLANILHA|AP|Nº)\s*[:\.]?\s*0*(\d{4,6})", texto, re.IGNORECASE)
+    match_ap = re.search(r"(?:PLANILHA|AP|Nº|N|NO)\s*[:\.]?\s*0*(\d{4,6})", texto, re.IGNORECASE)
     match_oc = re.search(r"OC\s*[:\.]?\s*0*(\d{4,6})", texto, re.IGNORECASE)
     dados['is_midia'] = bool(match_ap)
     dados['ap_oc'] = match_ap.group(1) if match_ap else (match_oc.group(1) if match_oc else "N/A")
@@ -54,11 +60,14 @@ def extrair_dados_pdf(pdf_file):
     
     return dados
 
-if st.button("🚀 Gerar Atestado", type="primary"):
+if st.button("🚀 Gerar Atestado Oficial", type="primary"):
     if not uploaded_file or not pi_pp_input:
         st.error("Por favor, envie o arquivo PDF e digite o número do PI/PP.")
     else:
-        dados = extrair_dados_pdf(uploaded_file)
+        with st.spinner("Lendo documento escaneado (Isso pode levar alguns segundos)..."):
+            # Lemos os bytes do PDF para passar pro conversor de imagem
+            pdf_bytes = uploaded_file.read()
+            dados = extrair_dados_pdf_escaneado(pdf_bytes)
         
         meses = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
         data_hoje = f"{datetime.now().day} de {meses[datetime.now().month - 1]} de {datetime.now().year}"
@@ -67,7 +76,7 @@ if st.button("🚀 Gerar Atestado", type="primary"):
         pdf.add_page()
         pdf.set_margins(15, 15, 15)
         
-        # Cabeçalho (COM HÍFEN NORMAL PARA EVITAR ERRO)
+        # Cabeçalho
         pdf.set_font("Helvetica", "B", 12)
         titulo_doc = f"ATESTADO DE VEICULAÇÃO DE MÍDIA | {dados['tag_cliente']}" if dados['is_midia'] else f"ATESTADO DE PRODUÇÃO - {dados['tag_cliente']}"
         pdf.cell(130, 10, limpar_texto(titulo_doc), ln=0)
