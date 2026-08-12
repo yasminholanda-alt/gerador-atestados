@@ -35,7 +35,7 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
     texto_upper = texto.upper()
     dados = {}
     
-    # 1. IDENTIFICAÇÃO INTELIGENTE DO CLIENTE (SESC x SENAC)
+    # 1. IDENTIFICAÇÃO DO CLIENTE (SESC x SENAC)
     if "03.648.344" in texto_upper or "SERVIÇO NACIONAL DE APRENDIZAGEM COMERCIAL" in texto_upper or "SERVICO NACIONAL" in texto_upper:
         is_senac = True
     elif "03.612.122" in texto_upper or "SERVIÇO SOCIAL DO COMERCIO" in texto_upper or "SERVICO SOCIAL" in texto_upper:
@@ -60,6 +60,34 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
     dados['is_midia'] = bool(match_ap)
     dados['ap_oc'] = match_ap.group(1) if match_ap else (match_oc.group(1) if match_oc else "N/A")
     
+    # 3. EXTRAI O CNPJ DO FORNECEDOR/VEÍCULO (Ignorando o do SESC/SENAC)
+    cnpjs_encontrados = re.findall(r"\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}", texto)
+    fornecedor_cnpj = ""
+    for c in cnpjs_encontrados:
+        if c not in ["03.612.122/0001-27", "03.648.344/0001-08"]:
+            fornecedor_cnpj = c
+            break
+    dados['fornecedor_cnpj'] = fornecedor_cnpj
+    
+    # 4. EXTRAI A RAZÃO SOCIAL DO FORNECEDOR (Lendo a linha acima do CNPJ)
+    fornecedor_nome = ""
+    linhas = [l.strip() for l in texto.split('\n') if l.strip()]
+    if fornecedor_cnpj:
+        for i, linha in enumerate(linhas):
+            if fornecedor_cnpj in linha and i > 0:
+                fornecedor_nome = linhas[i-1]
+                fornecedor_nome = re.sub(r"^(FORNECEDOR|VE[IÍ]CULO|RAZ[ÃA]O SOCIAL|EMPRESA)\s*[:\-]?\s*", "", fornecedor_nome, flags=re.IGNORECASE)
+                break
+                
+    if len(fornecedor_nome) < 3:
+        match_fornecedor = re.search(r"(?:FORNECEDOR|VE[IÍ]CULO|RAZ[ÃA]O SOCIAL|EMPRESA)\s*[:\-]?\s*([^\n\r]+)", texto, re.IGNORECASE)
+        if match_fornecedor:
+            fornecedor_nome = match_fornecedor.group(1).strip()
+            fornecedor_nome = re.split(r"(MEIO|FORMATO|PER[ÍI]ODO|CAMPANHA|VALOR|DATA|VE[IÍ]CULO|CNPJ|CLIENTE)", fornecedor_nome, flags=re.IGNORECASE)[0].strip()
+
+    dados['fornecedor'] = fornecedor_nome.upper() if fornecedor_nome else "FORNECEDOR NÃO IDENTIFICADO"
+
+    # 5. DEMAIS DADOS
     def extrair_e_limpar(padrao):
         match = re.search(padrao, texto, re.IGNORECASE)
         if match:
@@ -70,9 +98,6 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
 
     campanha = extrair_e_limpar(r"CAMPANHA:\s*([^\n\r]+)")
     dados['campanha'] = campanha if campanha else "MÍDIAS INSTITUCIONAIS"
-    
-    fornecedor = extrair_e_limpar(r"(?:FORNECEDOR|VE[IÍ]CULO|RAZ[ÃA]O SOCIAL|EMPRESA)\s*[:\-]?\s*([^\n\r]+)")
-    dados['fornecedor'] = fornecedor.upper() if fornecedor else "FORNECEDOR NÃO IDENTIFICADO"
     
     peca = extrair_e_limpar(r"(?:PE[ÇC]A|SERVI[ÇC]O|T[ÍI]TULO)\s*[:\-]?\s*([^\n\r]+)")
     dados['peca'] = peca if peca else "Serviço de Publicidade"
@@ -86,7 +111,7 @@ if st.button("🚀 Gerar Atestado Oficial", type="primary"):
     if not uploaded_file or not pi_pp_input:
         st.error("Por favor, envie o arquivo PDF e digite o número do PI/PP.")
     else:
-        with st.spinner("Analisando PDF e extraindo informações..."):
+        with st.spinner("Analisando PDF e extraindo Razão Social/CNPJ..."):
             pdf_bytes = uploaded_file.read()
             dados = extrair_dados_pdf_escaneado(pdf_bytes)
         
@@ -94,7 +119,6 @@ if st.button("🚀 Gerar Atestado Oficial", type="primary"):
         data_hoje = f"{datetime.now().day} de {meses[datetime.now().month - 1]} de {datetime.now().year}"
         
         pdf = FPDF()
-        # Reduz a margem inferior para evitar criação de nova página desnecessariamente
         pdf.set_auto_page_break(auto=True, margin=10)
         pdf.add_page()
         pdf.set_margins(15, 15, 15)
@@ -104,7 +128,6 @@ if st.button("🚀 Gerar Atestado Oficial", type="primary"):
         titulo_doc = f"ATESTADO DE VEICULAÇÃO DE MÍDIA | {dados['tag_cliente']}" if dados['is_midia'] else f"ATESTADO DE PRODUÇÃO - {dados['tag_cliente']}"
         pdf.cell(130, 10, limpar_texto(titulo_doc), ln=0)
         
-        # Insere a nova logo transparente
         logo_path = "logo ebmquintto preta BG transparente.png"
         if os.path.exists(logo_path):
             pdf.image(logo_path, x=150, y=12, w=45)
@@ -120,18 +143,23 @@ if st.button("🚀 Gerar Atestado Oficial", type="primary"):
         pdf.line(15, pdf.get_y(), 195, pdf.get_y())
         pdf.ln(8)
         
+        # Monta a string do Fornecedor + CNPJ
+        fornecedor_formatado = f"{dados['fornecedor']}"
+        if dados['fornecedor_cnpj']:
+            fornecedor_formatado += f", CNPJ: {dados['fornecedor_cnpj']}"
+
         # Texto Principal
         pdf.set_font("Helvetica", "", 10)
         if dados['is_midia']:
-            texto = f"Atestamos para fins de comprovação de execução de serviço prestados que no {dados['mes_ano']}, o veículo {dados['fornecedor']} a veiculações de mídias publicitárias do cliente {dados['cliente_nome']}, CNPJ {dados['cliente_cnpj']} intermediadas por essa agência de publicidade no período de acordo com as planilhas de AP e PI relacionadas abaixo."
+            texto = f"Atestamos para fins de comprovação de execução de serviço prestados que no {dados['mes_ano']}, o veículo {fornecedor_formatado} a veiculações de mídias publicitárias do cliente {dados['cliente_nome']}, CNPJ {dados['cliente_cnpj']} intermediadas por essa agência de publicidade no período de acordo com as planilhas de AP e PI relacionadas abaixo."
         else:
-            texto = f"Atestamos para fins de comprovação de execução de serviço prestados, que o fornecedor {dados['fornecedor']} produziu material publicitário para o {dados['cliente_nome']}, CNPJ {dados['cliente_cnpj']} intermediadas por essa agência de publicidade no período de acordo com as OC e PP relacionadas abaixo."
+            texto = f"Atestamos para fins de comprovação de execução de serviço prestados, que o fornecedor {fornecedor_formatado} produziu material publicitário para o {dados['cliente_nome']}, CNPJ {dados['cliente_cnpj']} intermediadas por essa agência de publicidade no período de acordo com as OC e PP relacionadas abaixo."
             
         pdf.multi_cell(0, 6, limpar_texto(texto))
         pdf.ln(8)
         
         # Tabela
-        pdf.set_draw_color(255, 204, 0) # Bordas Amarelas
+        pdf.set_draw_color(255, 204, 0)
         pdf.set_line_width(1.0)
         
         pdf.set_fill_color(0, 0, 0)
@@ -174,18 +202,17 @@ if st.button("🚀 Gerar Atestado Oficial", type="primary"):
             pdf.cell(35, 10, limitar_tamanho(dados['peca'], 20), border=1, align="C")
             pdf.cell(40, 10, limitar_tamanho(dados['campanha'], 22), border=1, align="C")
             
-        pdf.ln(10) # Reduzido o espaço para garantir 1 página
+        pdf.ln(10)
         
         # Data e Assinatura
         pdf.set_font("Helvetica", "", 10)
         pdf.cell(0, 6, limpar_texto(f"Fortaleza/CE, {data_hoje}."), ln=1)
-        pdf.ln(5) # Reduzido
+        pdf.ln(5)
         
         if os.path.exists("luma_signature_perfect.png"):
-            # Exibe apenas a imagem da assinatura
             pdf.image("luma_signature_perfect.png", x=15, w=60)
         
-        # Rodapé Exato fixado no final da folha
+        # Rodapé Exato
         pdf.set_y(-30)
         pdf.set_font("Helvetica", "", 7)
         pdf.set_text_color(100, 100, 100)
@@ -208,7 +235,7 @@ if st.button("🚀 Gerar Atestado Oficial", type="primary"):
         
         pdf_bytes = pdf.output()
         
-        st.success("✅ Atestado gerado com sucesso em página única!")
+        st.success("✅ Atestado gerado com sucesso!")
         st.download_button(
             label="📥 Baixar Atestado PDF",
             data=bytes(pdf_bytes),
