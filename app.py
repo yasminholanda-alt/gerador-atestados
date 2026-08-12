@@ -80,33 +80,33 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
         match_fornecedor = re.search(r"(?:FORNECEDOR|VE[IÍ]CULO|RAZ[ÃA]O SOCIAL|EMPRESA)\s*[:\-]?\s*([^\n\r]+)", texto, re.IGNORECASE)
         if match_fornecedor:
             fornecedor_nome = match_fornecedor.group(1).strip()
-            fornecedor_nome = re.split(r"(MEIO|FORMATO|PER[ÍI]ODO|CAMPANHA|VALOR|DATA|VE[IÍ]CULO|CNPJ|CLIENTE)", fornecedor_nome, flags=re.IGNORECASE)[0].strip()
+            fornecedor_nome = re.split(r"(MEIO:|FORMATO:|PER[ÍI]ODO:|CAMPANHA:|VALOR:|DATA:|VE[IÍ]CULO:|CNPJ:|CLIENTE:)", fornecedor_nome, flags=re.IGNORECASE)[0].strip()
             fornecedor_nome = re.split(r"\||\+|=|_", fornecedor_nome)[0].strip()
 
     dados['fornecedor'] = fornecedor_nome.upper() if fornecedor_nome else "FORNECEDOR NÃO IDENTIFICADO"
 
-    # 5. LISTA ANTI-SUJEIRA FORTE
-    stop_words = r"(ACABAMENTO|VALIDADE|PRODUTO|ESP[EÉ]CIE|T[ÍI]TULO|MEIO|FORMATO|PER[ÍI]ODO|CAMPANHA|VALOR|DATA|VE[IÍ]CULO|CNPJ|CLIENTE|PROJETO|CORES|PZ\.ENTREGA|A CLIENTE|DESCRI[ÇC][ÃA]O)"
+    # 5. LISTA ANTI-SUJEIRA REFINADA COM DOIS PONTOS OBRIGATÓRIOS
+    # Isso impede que o sistema corte o texto se a palavra estiver no meio de uma frase (ex: PRODUCAO CAMPANHA AZUL)
+    stop_words = r"(ACABAMENTO:|VALIDADE:|PRODUTO:|ESP[EÉ]CIE:|T[ÍI]TULO:|MEIO:|FORMATO:|PER[ÍI]ODO:|CAMPANHA:|VALOR:|DATA:|VE[IÍ]CULO:|CNPJ:|CLIENTE:|PROJETO:|CORES:|PZ\.ENTREGA:|A CLIENTE:)"
     
     def extrair_linha_limpa(padrao, default):
-        # Captura apenas o que estiver na mesma linha após a palavra-chave
         match = re.search(padrao, texto, re.IGNORECASE)
         if match:
             res = match.group(1).strip()
-            # Corta imediatamente se bater em qualquer palavra de parada (mesmo se o OCR comeu os ":")
+            # Corta se encontrar outra categoria com ":" ou traços de tabela
             res = re.split(stop_words, res, flags=re.IGNORECASE)[0].strip()
             res = re.split(r"\||\+|=|_", res)[0].strip()
             return res if len(res) > 2 else default
         return default
 
-    # CAMPANHA, TÍTULO E MÊS (Cortando sujeira com precisão)
+    # CAMPANHA E TÍTULO
     dados['campanha'] = extrair_linha_limpa(r"CAMPANHA\s*[:\-]?\s*([^\n\r]+)", "MÍDIAS INSTITUCIONAIS")
     dados['titulo'] = extrair_linha_limpa(r"T[ÍI]TULO\s*[:\-]?\s*([^\n\r]+)", "N/A")
     
     mes = extrair_linha_limpa(r"(?:M[ÊE]S|PER[ÍI]ODO|DATA)\s*[:\-]?\s*([^\n\r]+)", "Agosto/2026")
     dados['mes_ano'] = re.sub(r"^(M[ÊE]S DE\s*|M[ÊE]S\s*)", "", mes, flags=re.IGNORECASE)
 
-    # 6. DADOS ESPECÍFICOS PARA MÍDIA (PEÇA)
+    # 6. MÍDIA (PEÇA)
     peca_header = extrair_linha_limpa(r"(?:PE[ÇC]A|SERVI[ÇC]O)\s*[:\-]?\s*([^\n\r]+)", "Serviço de Publicidade")
     match_aut = re.search(r"REFERENTE\s*[AÀ]\s*([^\n\r]+)", texto, re.IGNORECASE)
     if match_aut:
@@ -120,12 +120,12 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
         texto_peca += f" - {match_vol.group(1).strip()}"
     dados['peca'] = texto_peca if len(texto_peca) > 2 else "Serviço de Publicidade"
 
-    # 7. EXTRAÇÃO MILIMÉTRICA DE SERVIÇOS (Focado na OC)
-    # Busca o cabeçalho DESCRIÇÃO/FORNECEDOR e captura o item 1 
-    match_servico = re.search(r"DESCRI[ÇC][ÃA]O/FORNECEDOR[\s\S]{1,250}?(?:^|\n|\s)(?:1|01)[\s\|]+([^\n\r]+)", texto, re.IGNORECASE)
+    # 7. PRODUÇÃO (SERVIÇOS)
+    # Procura pela tarja ESPECIFICAÇÕES DO SERVIÇO ou DESCRIÇÃO e pega a primeira linha numerada "1"
+    match_servico = re.search(r"(?:ESPECIFICA[ÇC][ÕO]ES|DESCRI[ÇC][ÃA]O/FORNECEDOR)[\s\S]{1,300}?(?:^|\n)\s*(?:1|01)[\s\-]*([A-Za-z][^\n\r]+)", texto, re.IGNORECASE)
     if match_servico:
         linha_serv = match_servico.group(1).strip()
-        # Para a leitura assim que achar DFM, Condições, CNPJ ou espaços muito longos
+        # Para a leitura assim que achar DFM, Condições, CNPJ ou espaços muito longos que dividem colunas
         servico_limpo = re.split(r"\s{2,}|\d{1,3}\s*DFM|CNPJ|R\$|VALOR|COND\.", linha_serv, flags=re.IGNORECASE)[0].strip()
         dados['servicos'] = servico_limpo if len(servico_limpo) > 2 else "Serviços de Produção"
     else:
@@ -137,7 +137,7 @@ if st.button("🚀 Gerar Atestado Oficial", type="primary"):
     if not uploaded_file or not pi_pp_input:
         st.error("Por favor, envie o arquivo PDF e digite o número do PI/PP.")
     else:
-        with st.spinner("Analisando PDF (Lendo Título, Campanha e Serviços)..."):
+        with st.spinner("Analisando PDF (Extraindo Serviços, Título e Campanha)..."):
             pdf_bytes = uploaded_file.read()
             dados = extrair_dados_pdf_escaneado(pdf_bytes)
         
