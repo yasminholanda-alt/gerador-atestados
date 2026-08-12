@@ -1,4 +1,3 @@
-
 import streamlit as st
 import re
 import os
@@ -87,6 +86,9 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
                     fornecedor_nome = linhas[i-2] if i > 1 else fornecedor_nome
                     
                 fornecedor_nome = re.sub(r"^(FORNECEDOR|VE[IÍ]CULO|RAZ[ÃA]O SOCIAL|EMPRESA)\s*[:\-]?\s*", "", fornecedor_nome, flags=re.IGNORECASE)
+                
+                # Filtro Anti-Sujeira OCR: Corta o texto se encontrar caracteres de borda de tabela
+                fornecedor_nome = re.split(r"\||\+|=|_", fornecedor_nome)[0].strip()
                 break
                 
     # Fallback se não encontrar o CNPJ corretamente
@@ -95,6 +97,7 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
         if match_fornecedor:
             fornecedor_nome = match_fornecedor.group(1).strip()
             fornecedor_nome = re.split(r"(MEIO|FORMATO|PER[ÍI]ODO|CAMPANHA|VALOR|DATA|VE[IÍ]CULO|CNPJ|CLIENTE)", fornecedor_nome, flags=re.IGNORECASE)[0].strip()
+            fornecedor_nome = re.split(r"\||\+|=|_", fornecedor_nome)[0].strip()
 
     dados['fornecedor'] = fornecedor_nome.upper() if fornecedor_nome else "FORNECEDOR NÃO IDENTIFICADO"
 
