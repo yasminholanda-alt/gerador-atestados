@@ -1,11 +1,14 @@
 import streamlit as st
 import pypdf
 import re
-import base64
-from fpdf import FPDF
 import io
+from reportlab.lib.pagesizes import A4
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, HRFlowable
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_RIGHT, TA_LEFT
 
-# Configuração da página
+# Configuração da Página Web
 st.set_page_config(page_title="Gerador de Atestados - EBM QUINTTO", page_icon="📄", layout="centered")
 
 st.title("📄 Gerador de Atestados Sesc / Senac")
@@ -43,121 +46,122 @@ def extrair_dados_pdf(pdf_file):
     dados['campanha'] = match_campanha.group(1).strip() if match_campanha else "MÍDIAS INSTITUCIONAIS"
     return dados
 
-class AtestadoPDF(FPDF):
-    def footer(self):
-        self.set_y(-25)
-        self.set_draw_color(220, 220, 220)
-        self.line(15, self.get_y(), 195, self.get_y())
-        self.set_font("Helvetica", "", 7)
-        self.set_text_color(100, 100, 100)
+def gerar_pdf(dados, num_id, data_emissao, is_midia):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=40,
+        rightMargin=40,
+        topMargin=40,
+        bottomMargin=60
+    )
+    
+    styles = getSampleStyleSheet()
+    
+    title_style = ParagraphStyle(
+        'DocTitle',
+        fontName='Helvetica-Bold',
+        fontSize=12,
+        leading=14,
+        textColor=colors.HexColor('#111111')
+    )
+    
+    brand_style = ParagraphStyle(
+        'BrandLogo',
+        fontName='Helvetica-Bold',
+        fontSize=16,
+        leading=16,
+        alignment=TA_RIGHT,
+        textColor=colors.HexColor('#111111')
+    )
+    
+    body_style = ParagraphStyle(
+        'BodyTextCustom',
+        fontName='Helvetica',
+        fontSize=10,
+        leading=16,
+        alignment=TA_JUSTIFY,
+        textColor=colors.HexColor('#222222')
+    )
+    
+    header_title = f"ATESTADO DE VEICULAÇÃO DE MÍDIA | {dados['tag_cliente']}" if is_midia else f"ATESTADO DE PRODUÇÃO – {dados['tag_cliente']}"
+    
+    elements = []
+    
+    # Cabeçalho
+    header_data = [
+        [Paragraph(header_title, title_style), Paragraph("EBM<br/><b>QUINTTO.</b>", brand_style)]
+    ]
+    header_table = Table(header_data, colWidths=[360, 155])
+    header_table.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'MIDDLE')]))
+    elements.append(header_table)
+    elements.append(Spacer(1, 10))
+    
+    # Linha Amarela
+    elements.append(HRFlowable(width="100%", thickness=2.5, color=colors.HexColor('#FFCC00'), spaceAfter=20))
+    
+    # Texto
+    texto = f"Atestamos para fins de comprovação de execução de serviço prestados que para o cliente <b>{dados['cliente_nome']}</b>, CNPJ <b>{dados['cliente_cnpj']}</b>, intermediadas por essa agência de publicidade no período de acordo com as informações relacionadas abaixo."
+    elements.append(Paragraph(texto, body_style))
+    elements.append(Spacer(1, 20))
+    
+    # Tabela
+    col1 = "PLANILHA AP Nº" if is_midia else "PP Nº"
+    col2 = "PI Nº" if is_midia else "OC Nº"
+    col3 = "PEÇA" if is_midia else "SERVIÇOS"
+    
+    th_style = ParagraphStyle('TH', fontName='Helvetica-Bold', fontSize=8, leading=10, alignment=TA_CENTER, textColor=colors.white)
+    td_style = ParagraphStyle('TD', fontName='Helvetica', fontSize=8, leading=11, alignment=TA_CENTER, textColor=colors.HexColor('#222222'))
+    
+    table_data = [
+        [Paragraph("#", th_style), Paragraph(col1, th_style), Paragraph(col2, th_style), Paragraph(col3, th_style), Paragraph("CAMPANHA", th_style)],
+        [Paragraph("1", td_style), Paragraph(str(dados['planilha_num']), td_style), Paragraph(str(num_id), td_style), Paragraph("Serviço de Publicidade / Mídia", td_style), Paragraph(str(dados['campanha']), td_style)]
+    ]
+    
+    table = Table(table_data, colWidths=[25, 110, 80, 160, 140])
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#111111')),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#D1D5DB')),
+        ('TOPPADDING', (0,0), (-1,-1), 8),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 8),
+    ]))
+    
+    elements.append(table)
+    elements.append(Spacer(1, 25))
+    
+    # Data
+    elements.append(Paragraph(f"Fortaleza/CE, {data_emissao}.", body_style))
+    elements.append(Spacer(1, 15))
+    
+    # Assinatura
+    try:
+        elements.append(Image("luma_signature_perfect.png", width=140, height=35, hAlign='LEFT'))
+    except:
+        pass
         
-        # Endereços
-        self.cell(60, 4, "Fortaleza-CE", ln=0, align="C")
-        self.cell(60, 4, "Brasília-DF", ln=0, align="C")
-        self.cell(60, 4, "Bahia-BA", ln=1, align="C")
-        
-        self.cell(60, 3, "R. Beni Carvalho, 138", ln=0, align="C")
-        self.cell(60, 3, "Setor Comercial Norte, Q. 01 Bl. D", ln=0, align="C")
-        self.cell(60, 3, "Al. Salvador, 1057, Sl. 1411", ln=1, align="C")
-        
-        self.cell(60, 3, "CEP: 60135-400 | +55 85 3253.5555", ln=0, align="C")
-        self.cell(60, 3, "CEP: 70711-948 | +55 61 3525-7988", ln=0, align="C")
-        self.cell(60, 3, "CEP: 41820-790 | +55 71 3825-3178", ln=1, align="C")
-        
-        self.ln(2)
-        self.set_font("Helvetica", "B", 7)
-        self.cell(0, 3, "ebmquintto.com.br | @ebmquintto", align="C")
+    elements.append(HRFlowable(width=220, thickness=1.5, color=colors.HexColor('#111111'), hAlign='LEFT', spaceAfter=8))
+    
+    sig_text = "<b>EBM QUINTTO COMUNICAÇÃO LTDA</b><br/><b>Luma Oliveira</b><br/>Analista Financeiro"
+    elements.append(Paragraph(sig_text, ParagraphStyle('Sig', fontName='Helvetica', fontSize=9, leading=13)))
+    
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer
 
 if st.button("🚀 Gerar Atestado", type="primary"):
     if not uploaded_file or not num_id:
         st.error("Por favor, anexe o PDF e preencha o número do PI/PP.")
     else:
         dados = extrair_dados_pdf(uploaded_file)
-        is_midia = (doc_type == "Mídia (AP)")
-        
-        pdf = AtestadoPDF()
-        pdf.add_page()
-        pdf.set_margins(15, 15, 15)
-        
-        # Cabeçalho
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.set_text_color(17, 17, 17)
-        titulo = f"ATESTADO DE VEICULAÇÃO DE MÍDIA | {dados['tag_cliente']}" if is_midia else f"ATESTADO DE PRODUÇÃO – {dados['tag_cliente']}"
-        pdf.cell(120, 10, titulo, ln=0)
-        
-        pdf.set_font("Helvetica", "B", 16)
-        pdf.cell(60, 6, "EBM", ln=1, align="R")
-        pdf.cell(180, 6, "QUINTTO.", ln=1, align="R")
-        
-        # Linha Amarela
-        pdf.set_draw_color(255, 204, 0)
-        pdf.set_linewidth(1)
-        pdf.line(15, 32, 195, 32)
-        pdf.ln(10)
-        
-        # Texto
-        pdf.set_font("Helvetica", "", 10)
-        pdf.set_text_color(34, 34, 34)
-        texto = f"Atestamos para fins de comprovação de execução de serviço prestados para o cliente {dados['cliente_nome']}, CNPJ {dados['cliente_cnpj']}, intermediadas por essa agência de publicidade no período de acordo com as informações relacionadas abaixo."
-        pdf.multi_cell(0, 6, texto)
-        pdf.ln(6)
-        
-        # Tabela
-        col1 = "PLANILHA AP Nº" if is_midia else "PP Nº"
-        col2 = "PI Nº" if is_midia else "OC Nº"
-        col3 = "PEÇA" if is_midia else "SERVIÇOS"
-        
-        pdf.set_fill_color(17, 17, 17)
-        pdf.set_text_color(255, 255, 255)
-        pdf.set_font("Helvetica", "B", 8)
-        
-        pdf.cell(10, 8, "#", border=1, fill=True, align="C")
-        pdf.cell(35, 8, col1, border=1, fill=True, align="C")
-        pdf.cell(30, 8, col2, border=1, fill=True, align="C")
-        pdf.cell(55, 8, col3, border=1, fill=True, align="C")
-        pdf.cell(50, 8, "CAMPANHA", border=1, fill=True, align="C")
-        pdf.ln()
-        
-        pdf.set_fill_color(253, 253, 253)
-        pdf.set_text_color(34, 34, 34)
-        pdf.set_font("Helvetica", "", 8)
-        
-        pdf.cell(10, 10, "1", border=1, align="C")
-        pdf.cell(35, 10, str(dados['planilha_num']), border=1, align="C")
-        pdf.cell(30, 10, str(num_id), border=1, align="C")
-        pdf.cell(55, 10, "Serviço de Publicidade / Mídia", border=1, align="C")
-        pdf.cell(50, 10, str(dados['campanha']), border=1, align="C")
-        pdf.ln(15)
-        
-        # Data
-        pdf.set_font("Helvetica", "", 10)
-        pdf.cell(0, 6, f"Fortaleza/CE, {data_emissao}.", ln=1)
-        pdf.ln(5)
-        
-        # Assinatura Image
-        try:
-            pdf.image("luma_signature_perfect.png", x=15, w=50)
-        except:
-            pass
-            
-        pdf.set_draw_color(17, 17, 17)
-        pdf.line(15, pdf.get_y(), 80, pdf.get_y())
-        pdf.ln(2)
-        
-        pdf.set_font("Helvetica", "B", 8)
-        pdf.cell(0, 4, "EBM QUINTTO COMUNICAÇÃO LTDA", ln=1)
-        pdf.set_font("Helvetica", "B", 10)
-        pdf.cell(0, 5, "Luma Oliveira", ln=1)
-        pdf.set_font("Helvetica", "", 9)
-        pdf.cell(0, 4, "Analista Financeiro", ln=1)
-        
-        pdf_out = io.BytesIO()
-        pdf_bytes = pdf.output(dest='S')
+        pdf_buffer = gerar_pdf(dados, num_id, data_emissao, (doc_type == "Mídia (AP)"))
         
         st.success("✅ Atestado gerado com sucesso!")
         st.download_button(
             label="📥 Baixar Atestado PDF",
-            data=bytes(pdf_bytes),
+            data=pdf_buffer,
             file_name=f"ATESTADO_{dados['tag_cliente']}_{num_id}.pdf",
             mime="application/pdf"
         )
