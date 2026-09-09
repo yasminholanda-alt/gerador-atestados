@@ -171,9 +171,10 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
         match_aut = re.search(r"REFERENTE\s*[AÀ]\s*([^\n\r]+)", texto_upper)
         match_veic = re.search(r"(VEICULA[ÇC][ÃA]O DE\s*[^\n\r]+)", texto_upper)
         match_peca = re.search(r"(?:PE[ÇC]A|SERVI[ÇC]O)\s*[:\-]?\s*([^\n\r\|]+)", texto_upper)
-        # Fallback final: linha descritiva da proposta comercial, que costuma
-        # citar chamadas/inserções e o período de veiculação por extenso.
-        match_desc = re.search(r"([^\n\r]*(?:CHAMADAS|INSER[ÇC][ÕO]ES)[^\n\r]*)", texto_upper)
+        # Fallback final: só a descrição curta da peça (ex: "08 chamadas
+        # diárias de 30 segundos"), parando no primeiro ponto/vírgula —
+        # período e total de inserções ficam de fora, são outra informação.
+        match_desc = re.search(r"([^\n\r,\.]*(?:CHAMADAS|INSER[ÇC][ÕO]ES)[^\n\r,\.]*)", texto_upper)
         texto_peca = (
             match_aut.group(1).strip() if match_aut else
             match_veic.group(1).strip() if match_veic else
@@ -183,8 +184,6 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
         match_vol = re.search(r"VOLUME:\s*([^\n\r]+)", texto_upper)
         if match_vol and texto_peca:
             texto_peca += f" - {match_vol.group(1).strip()}"
-        if dados['periodo_veiculacao'] and dados['periodo_veiculacao'] not in texto_peca:
-            texto_peca += f" (período de veiculação: {dados['periodo_veiculacao']})"
         dados['peca'] = texto_peca
     else:
         match_serv = re.search(r"(?:OP[ÇC][ÃA]O|DESCRI[ÇC][ÃA]O.*?FORNECEDOR)[\s\S]{1,200}?(?:^|\n)\s*(?:1|01)\s+([^\n\r]+)", texto_upper)
