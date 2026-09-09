@@ -5,6 +5,7 @@ from datetime import datetime
 from fpdf import FPDF
 import pytesseract
 from pdf2image import convert_from_bytes
+from PIL import ImageOps
 
 st.set_page_config(page_title="Gerador de Atestados - EBM QUINTTO", page_icon="📄", layout="wide")
 
@@ -49,14 +50,22 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
     """Retorna (dados, texto_bruto, erro). Nunca lança exceção pra fora —
     devolve erro=str para a UI tratar de forma amigável."""
     try:
-        imagens = convert_from_bytes(pdf_bytes)
+        # DPI mais alto = mais detalhe para o OCR reconhecer letras pequenas
+        # (padrão do pdf2image é 200; documentos escaneados com texto miúdo
+        # se beneficiam de 300).
+        imagens = convert_from_bytes(pdf_bytes, dpi=300)
     except Exception as e:
         return {}, "", f"Falha ao converter o PDF em imagem (poppler indisponível?): {e}"
 
     texto = ""
     try:
         for img in imagens:
-            texto += pytesseract.image_to_string(img, lang='por') + "\n"
+            # Escala de cinza reduz ruído de fundo (sombra de scanner, papel
+            # amarelado) e geralmente melhora a taxa de acerto do Tesseract.
+            img_processada = ImageOps.grayscale(img)
+            # --psm 6: trata a página como um bloco único de texto, funciona
+            # bem para formulários tabulares como AP/OC.
+            texto += pytesseract.image_to_string(img_processada, lang='por', config='--psm 6') + "\n"
     except Exception as e:
         return {}, texto, f"Falha no OCR (tesseract indisponível ou idioma 'por' não instalado?): {e}"
 
@@ -150,8 +159,8 @@ if uploaded_file:
     if not dados.get('cliente_identificado'):
         st.warning("⚠️ Cliente não reconhecido automaticamente pelo CNPJ/nome no documento. Preencha manualmente abaixo.")
 
-    st.subheader("2. Revise os dados e complete o PI/PP")
-    st.info("💡 Como o documento é escaneado, revise se o robô leu os campos corretamente. Corrija o que precisar abaixo:")
+    st.subheader("2. Confira os dados extraídos automaticamente")
+    st.info("💡 Os campos abaixo já vêm preenchidos com o que o OCR leu do documento. Você só precisa digitar algo se algum campo aparecer errado ou vazio.")
 
     campos_vazios = [nome for nome, val in [
         ("Fornecedor", dados['fornecedor']),
@@ -166,7 +175,7 @@ if uploaded_file:
 
     with col1:
         doc_type = st.radio("Tipo de Serviço:", ["Mídia (AP)", "Produção (OC)"], index=0 if dados['is_midia'] else 1)
-        pi_pp_val = st.text_input("Nº da PI / PP (Obrigatório):", placeholder="Ex: 37710")
+        pi_pp_val = st.text_input("Nº da PI / PP (Obrigatório - não consta no documento escaneado):", placeholder="Ex: 37710")
         ap_oc_val = st.text_input("Nº da AP / OC:", value=dados['ap_oc'])
 
     with col2:
