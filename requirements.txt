@@ -2,3 +2,4 @@ streamlit
 pdf2image
 pytesseract
 fpdf2
+pdfplumber
