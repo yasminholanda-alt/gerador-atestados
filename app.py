@@ -1,7 +1,6 @@
 import streamlit as st
 import re
 import os
-import json
 from datetime import datetime
 from fpdf import FPDF
 import pytesseract
@@ -32,8 +31,6 @@ CLIENTES_CADASTRADOS = {
 
 CNPJS_AGENCIA_E_CLIENTES = list(CLIENTES_CADASTRADOS.keys()) + ["14.470.051/0001-91"]
 
-CONTADOR_PATH = "contador_atestados.json"
-
 
 def limpar_texto(texto):
     if not texto:
@@ -45,28 +42,6 @@ def limpar_texto(texto):
 def limitar_tamanho(texto, max_len):
     texto = limpar_texto(texto)
     return texto[:max_len - 3] + "..." if len(texto) > max_len else texto
-
-
-def proximo_numero_atestado():
-    """Contador sequencial simples salvo em disco.
-    ATENÇÃO: no Streamlit Cloud o filesystem é efêmero — a cada novo deploy
-    ou reinício do app esse arquivo é apagado e o contador reinicia do zero.
-    Para numeração confiável em produção, troque por um banco externo
-    (ex: uma planilha do Google Sheets, Supabase, ou SQLite em volume persistente)."""
-    contador = {"ultimo": 0}
-    if os.path.exists(CONTADOR_PATH):
-        try:
-            with open(CONTADOR_PATH, "r") as f:
-                contador = json.load(f)
-        except (json.JSONDecodeError, IOError):
-            pass
-    contador["ultimo"] += 1
-    try:
-        with open(CONTADOR_PATH, "w") as f:
-            json.dump(contador, f)
-    except IOError:
-        st.warning("Não foi possível salvar o contador de atestados neste ambiente.")
-    return contador["ultimo"]
 
 
 @st.cache_data
@@ -206,8 +181,6 @@ if uploaded_file:
         peca_servico_val = st.text_input("Peça / Serviços (Pode colar textos longos aqui):", value=dados['peca'])
         titulo_val = st.text_input("Título (Apenas Produção):", value=campanha_val if doc_type == "Produção (OC)" else "N/A", disabled=doc_type == "Mídia (AP)")
 
-    responsavel_val = st.text_input("Responsável pela emissão (seu nome):", placeholder="Ex: Maria Silva")
-
     st.divider()
     st.subheader("3. Confirmação")
     confirmo = st.checkbox(
@@ -219,10 +192,7 @@ if uploaded_file:
             st.error("Por favor, preencha o número do PI/PP.")
         elif not cliente_nome_val or not cliente_cnpj_val:
             st.error("Por favor, preencha o cliente e o CNPJ do cliente.")
-        elif not responsavel_val:
-            st.error("Por favor, informe o responsável pela emissão.")
         else:
-            numero_atestado = proximo_numero_atestado()
             tag_cliente = dados['tag_cliente'] or re.sub(r"[^A-Z]", "", cliente_nome_val.upper())[:15]
 
             meses = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
@@ -235,7 +205,7 @@ if uploaded_file:
 
             pdf.set_font("Helvetica", "B", 12)
             is_midia_selecionado = (doc_type == "Mídia (AP)")
-            titulo_doc = f"ATESTADO Nº {numero_atestado:04d} - VEICULAÇÃO DE MÍDIA | {tag_cliente}" if is_midia_selecionado else f"ATESTADO Nº {numero_atestado:04d} - PRODUÇÃO - {tag_cliente}"
+            titulo_doc = f"ATESTADO DE VEICULAÇÃO DE MÍDIA | {tag_cliente}" if is_midia_selecionado else f"ATESTADO DE PRODUÇÃO - {tag_cliente}"
             pdf.cell(200, 10, limpar_texto(titulo_doc), ln=0)
 
             logo_path = "logo ebmquintto preta BG transparente.png"
@@ -315,9 +285,6 @@ if uploaded_file:
             if os.path.exists("luma_signature_perfect.png"):
                 pdf.image("luma_signature_perfect.png", x=15, w=60)
 
-            pdf.set_font("Helvetica", "", 8)
-            pdf.cell(0, 4, limpar_texto(f"Emitido por: {responsavel_val} | Atestado nº {numero_atestado:04d} | Gerado em {datetime.now().strftime('%d/%m/%Y %H:%M')}"), ln=1)
-
             pdf.set_y(-30)
             pdf.set_font("Helvetica", "", 7)
             pdf.set_text_color(100, 100, 100)
@@ -340,10 +307,10 @@ if uploaded_file:
 
             pdf_bytes = pdf.output()
 
-            st.success(f"✅ Atestado nº {numero_atestado:04d} gerado com sucesso!")
+            st.success("✅ Atestado gerado com sucesso!")
             st.download_button(
                 label="📥 Baixar Atestado PDF",
                 data=bytes(pdf_bytes),
-                file_name=limpar_texto(f"ATESTADO_{numero_atestado:04d}_{tag_cliente}_{ap_oc_val}.pdf"),
+                file_name=limpar_texto(f"ATESTADO_{tag_cliente}_{ap_oc_val}.pdf"),
                 mime="application/pdf"
             )
