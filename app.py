@@ -1,11 +1,13 @@
 import streamlit as st
 import re
 import os
+import io
 from datetime import datetime
 from fpdf import FPDF
 import pytesseract
 from pdf2image import convert_from_bytes
 from PIL import ImageOps
+import pdfplumber
 
 st.set_page_config(page_title="Gerador de Atestados - EBM QUINTTO", page_icon="📄", layout="wide")
 
@@ -45,29 +47,57 @@ def limitar_tamanho(texto, max_len):
     return texto[:max_len - 3] + "..." if len(texto) > max_len else texto
 
 
+def extrair_texto_nativo_pdf(pdf_bytes):
+    """Tenta ler o texto real embutido no PDF (documentos gerados por
+    computador, como este formulário da AP). Muito mais confiável que OCR
+    quando existe — sem erro de leitura de caractere. Retorna None se o PDF
+    não tiver camada de texto (aí sim é preciso cair para OCR de imagem)."""
+    try:
+        texto = ""
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            for pagina in pdf.pages:
+                texto_pagina = pagina.extract_text()
+                if texto_pagina:
+                    texto += texto_pagina + "\n"
+        # Um PDF puramente escaneado (imagem) retorna pouco ou nenhum texto
+        if len(texto.strip()) > 40:
+            return texto
+    except Exception:
+        pass
+    return None
+
+
 @st.cache_data
 def extrair_dados_pdf_escaneado(pdf_bytes):
-    """Retorna (dados, texto_bruto, erro). Nunca lança exceção pra fora —
-    devolve erro=str para a UI tratar de forma amigável."""
-    try:
-        # DPI mais alto = mais detalhe para o OCR reconhecer letras pequenas
-        # (padrão do pdf2image é 200; documentos escaneados com texto miúdo
-        # se beneficiam de 300).
-        imagens = convert_from_bytes(pdf_bytes, dpi=300)
-    except Exception as e:
-        return {}, "", f"Falha ao converter o PDF em imagem (poppler indisponível?): {e}"
+    """Retorna (dados, texto_bruto, erro, fonte). Nunca lança exceção pra
+    fora — devolve erro=str para a UI tratar de forma amigável.
+    'fonte' indica se o texto veio do PDF nativo ou de OCR, útil pra
+    diagnosticar quando algum campo não é encontrado."""
+    texto = extrair_texto_nativo_pdf(pdf_bytes)
+    fonte = "texto nativo do PDF"
 
-    texto = ""
-    try:
-        for img in imagens:
-            # Escala de cinza reduz ruído de fundo (sombra de scanner, papel
-            # amarelado) e geralmente melhora a taxa de acerto do Tesseract.
-            img_processada = ImageOps.grayscale(img)
-            # --psm 6: trata a página como um bloco único de texto, funciona
-            # bem para formulários tabulares como AP/OC.
-            texto += pytesseract.image_to_string(img_processada, lang='por', config='--psm 6') + "\n"
-    except Exception as e:
-        return {}, texto, f"Falha no OCR (tesseract indisponível ou idioma 'por' não instalado?): {e}"
+    if texto is None:
+        fonte = "OCR (imagem)"
+        try:
+            # DPI mais alto = mais detalhe para o OCR reconhecer letras
+            # pequenas (padrão do pdf2image é 200; documentos escaneados
+            # com texto miúdo se beneficiam de 300).
+            imagens = convert_from_bytes(pdf_bytes, dpi=300)
+        except Exception as e:
+            return {}, "", f"Falha ao converter o PDF em imagem (poppler indisponível?): {e}", fonte
+
+        texto = ""
+        try:
+            for img in imagens:
+                # Escala de cinza reduz ruído de fundo (sombra de scanner,
+                # papel amarelado) e geralmente melhora a taxa de acerto do
+                # Tesseract.
+                img_processada = ImageOps.grayscale(img)
+                # --psm 6: trata a página como um bloco único de texto,
+                # funciona bem para formulários tabulares como AP/OC.
+                texto += pytesseract.image_to_string(img_processada, lang='por', config='--psm 6') + "\n"
+        except Exception as e:
+            return {}, texto, f"Falha no OCR (tesseract indisponível ou idioma 'por' não instalado?): {e}", fonte
 
     texto_upper = texto.upper()
     dados = {}
@@ -100,10 +130,15 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
     cnpjs_encontrados = re.findall(r"\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}", texto)
     dados['fornecedor_cnpj'] = next((c for c in cnpjs_encontrados if c not in CNPJS_AGENCIA_E_CLIENTES), "")
 
-    # 4. FORNECEDOR NOME
-    fornecedor_nome = ""
-    linhas = [l.strip() for l in texto.split('\n') if l.strip()]
-    if dados['fornecedor_cnpj']:
+    # 4. FORNECEDOR NOME — prioriza o rótulo "VEÍCULO:" quando existe (mais
+    # confiável), já que a heurística de "linha anterior ao CNPJ" pode pegar
+    # o nome de outra entidade que aparece perto de um CNPJ na tabela (ex:
+    # o responsável legal/MEI, que é diferente do nome comercial do veículo).
+    match_veiculo_label = re.search(r"VE[ÍI]CULO\s*[:\-]?\s*([^\n\r\|]+)", texto_upper)
+    fornecedor_nome = match_veiculo_label.group(1).strip() if match_veiculo_label else ""
+
+    if not fornecedor_nome and dados['fornecedor_cnpj']:
+        linhas = [l.strip() for l in texto.split('\n') if l.strip()]
         for i, linha in enumerate(linhas):
             if dados['fornecedor_cnpj'] in linha and i > 0:
                 fornecedor_nome = linhas[i - 1]
@@ -120,40 +155,58 @@ def extrair_dados_pdf_escaneado(pdf_bytes):
     dados['titulo'] = dados['campanha'] if dados['campanha'] else "N/A"
 
     # 6. MÊS
-    match_mes = re.search(r"(?:M[ÊE]S|PER[ÍI]ODO|DATA)\s*[:\-]?\s*([^\n\r\|]+)", texto_upper)
+    match_mes = re.search(r"(?:M[ÊE]S|PER[ÍI]ODO)\s*[:\-]?\s*([^\n\r\|]+)", texto_upper)
     mes = match_mes.group(1).strip() if match_mes else ""
     dados['mes_ano'] = re.sub(r"^(M[ÊE]S DE\s*|M[ÊE]S\s*)", "", mes, flags=re.IGNORECASE)
+
+    # 6b. PERÍODO DE VEICULAÇÃO detalhado — algumas AP trazem o período
+    # exato de execução dentro do texto da proposta (ex: "no período de 09
+    # a 19/Julho/26"), diferente do campo "PERÍODO:" acima, que só traz o
+    # mês/ano de referência.
+    match_periodo_detalhe = re.search(r"PER[ÍI]ODO DE\s+([^\n\r,\.]+)", texto_upper)
+    dados['periodo_veiculacao'] = match_periodo_detalhe.group(1).strip() if match_periodo_detalhe else ""
 
     # 7. PEÇA / SERVIÇOS
     if dados['is_midia']:
         match_aut = re.search(r"REFERENTE\s*[AÀ]\s*([^\n\r]+)", texto_upper)
         match_veic = re.search(r"(VEICULA[ÇC][ÃA]O DE\s*[^\n\r]+)", texto_upper)
         match_peca = re.search(r"(?:PE[ÇC]A|SERVI[ÇC]O)\s*[:\-]?\s*([^\n\r\|]+)", texto_upper)
-        texto_peca = match_aut.group(1).strip() if match_aut else (match_veic.group(1).strip() if match_veic else (match_peca.group(1).strip() if match_peca else ""))
+        # Fallback final: linha descritiva da proposta comercial, que costuma
+        # citar chamadas/inserções e o período de veiculação por extenso.
+        match_desc = re.search(r"([^\n\r]*(?:CHAMADAS|INSER[ÇC][ÕO]ES)[^\n\r]*)", texto_upper)
+        texto_peca = (
+            match_aut.group(1).strip() if match_aut else
+            match_veic.group(1).strip() if match_veic else
+            match_peca.group(1).strip() if match_peca else
+            match_desc.group(1).strip() if match_desc else ""
+        )
         match_vol = re.search(r"VOLUME:\s*([^\n\r]+)", texto_upper)
         if match_vol and texto_peca:
             texto_peca += f" - {match_vol.group(1).strip()}"
+        if dados['periodo_veiculacao'] and dados['periodo_veiculacao'] not in texto_peca:
+            texto_peca += f" (período de veiculação: {dados['periodo_veiculacao']})"
         dados['peca'] = texto_peca
     else:
         match_serv = re.search(r"(?:OP[ÇC][ÃA]O|DESCRI[ÇC][ÃA]O.*?FORNECEDOR)[\s\S]{1,200}?(?:^|\n)\s*(?:1|01)\s+([^\n\r]+)", texto_upper)
         dados['peca'] = re.split(r"\s{2,}|\d{1,3}\s*DFM|CNPJ|R\$", match_serv.group(1))[0].strip() if match_serv else ""
 
-    return dados, texto, None
+    return dados, texto, None, fonte
 
 
-uploaded_file = st.file_uploader("1. Envie a AP ou OC em PDF escaneado", type=["pdf"])
+uploaded_file = st.file_uploader("1. Envie a AP ou OC em PDF (escaneada ou nativa)", type=["pdf"])
 
 if uploaded_file:
-    with st.spinner("Lendo documento escaneado..."):
-        dados, texto_bruto, erro = extrair_dados_pdf_escaneado(uploaded_file.read())
+    with st.spinner("Lendo documento..."):
+        dados, texto_bruto, erro, fonte_texto = extrair_dados_pdf_escaneado(uploaded_file.read())
 
     if erro:
         st.error(f"❌ {erro}")
         st.stop()
 
-    # Painel de conferência do texto bruto extraído pelo OCR — facilita
-    # detectar quando o robô leu algo errado antes de confiar nos campos.
-    with st.expander("🔍 Ver texto bruto extraído pelo OCR (para conferência)"):
+    # Painel de conferência do texto extraído — facilita detectar quando
+    # algum campo veio errado antes de confiar nos dados. Mostra também a
+    # origem (texto nativo do PDF é bem mais confiável que OCR de imagem).
+    with st.expander(f"🔍 Ver texto extraído para conferência (fonte: {fonte_texto})"):
         st.text(texto_bruto if texto_bruto else "Nenhum texto foi extraído.")
 
     if not dados.get('cliente_identificado'):
